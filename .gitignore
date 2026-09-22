@@ -1,3 +1,6 @@
 data/*.jsonl
+data/*.sqlite-journal
+data/*.sqlite-wal
+data/*.sqlite-shm
 server/sources.json
 *.log

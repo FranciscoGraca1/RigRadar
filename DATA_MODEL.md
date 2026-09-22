@@ -1,6 +1,6 @@
 # Modelo de dados para produção
 
-A implementação atual guarda o catálogo em `dist/catalog.json`, as leituras reais em `data/prices.jsonl` no servidor local e a build/lista seguida no navegador. O esquema SQL abaixo é uma proposta para sincronização multi-dispositivo e maior escala; **não é a base de dados usada pelo código atual**. A unidade central futura é uma listagem por SKU/EAN + loja, com observações imutáveis.
+A implementação atual guarda o catálogo em `dist/catalog.json`, as leituras reais em `data/prices.sqlite` e a build/lista seguida/preços-alvo no navegador. A base real usa `price_history(id, component_id, source_id, store, price_cents, availability, url, collected_at)` e `source_runs(source_id, status, checked_at, error, offers_count)`. `dist/prices.json` é uma projeção estática para o Pages, não a fonte de verdade. O esquema SQL abaixo é uma proposta **mais ampla**, ainda não implementada, para sincronização multi-dispositivo e maior escala.
 
 ```sql
 PRAGMA foreign_keys = ON;

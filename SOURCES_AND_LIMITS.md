@@ -16,10 +16,10 @@ Verificação feita em 22 de setembro de 2026. «Sem API pública encontrada» n
 ## Limites de recolha implementados e pendentes
 
 1. Implementado: fontes desligadas por defeito, declaração explícita de autorização, HTTPS e domínio fixo para cada fonte, `robots.txt` antes de páginas diretas, URLs de produto pré-configuradas, timeout de 10 s, respostas limitadas por tamanho e sem redirecionamentos automáticos.
-2. Implementado: uma execução concorrente por fonte neste processo, páginas diretas lidas sequencialmente com intervalo de 1 s, cache mínima de 10 minutos por fonte (60 minutos nos exemplos diretos), observações persistidas em JSONL e erro isolado por fonte. Se houver vários processos/servidores, não existe bloqueio distribuído: seria necessário adicioná-lo antes dessa escala.
+2. Implementado: uma execução concorrente por fonte neste processo, páginas diretas lidas sequencialmente com intervalo de 1 s, cache mínima de 10 minutos por fonte (60 minutos nos exemplos diretos), observações persistidas em SQLite e erro isolado por fonte. O workflow diário do GitHub Actions faz commit do histórico e publica uma projeção JSON no Pages. Se houver vários processos/servidores, não existe bloqueio distribuído: seria necessário adicioná-lo antes dessa escala.
 3. Pendente para produção: interpretar regras `robots.txt` mais complexas com uma biblioteca auditada, respeitar `Retry-After`/cabeçalhos de cache, backoff exponencial em `429`/`503`, registar versão de termos/autorização e tratar mudanças de estrutura com testes por fornecedor.
 4. Não usar browser headless, bypass de CAPTCHAs, rotação de IPs nem endpoints internos não documentados. Desativar o conector se a fonte mudar as regras ou o formato.
-5. A interface mostra hora da leitura, estado de stock e URL nas ofertas reais. Portes e preço final de checkout ainda não são conhecidos; qualquer preço é informativo e deve ser confirmado na loja.
+5. A interface mostra hora da leitura, estado de stock e URL nas ofertas reais. Portes e preço final de checkout ainda não são conhecidos; qualquer preço é informativo e deve ser confirmado na loja. GitHub Actions pode atrasar ou falhar uma execução agendada; a frescura dos dados é mostrada por SKU.
 
 ## Benchmarks e IA
 
