@@ -1,0 +1,12 @@
+{
+  "name": "RigRadar — preços e compatibilidade",
+  "short_name": "RigRadar",
+  "description": "Acompanha preços de componentes e valida a tua próxima build.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#090d18",
+  "theme_color": "#090d18",
+  "icons": [
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
