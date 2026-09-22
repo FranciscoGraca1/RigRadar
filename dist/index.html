@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090d18">
+  <meta name="description" content="Monitorização de preços, comparação de valor e PC Builder compatível.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="styles.css">
+  <title>RigRadar · preços e compatibilidade</title>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">R</span><span>Rig<span>Radar</span></span></div>
+      <nav aria-label="Navegação principal">
+        <button class="nav-item active" data-view="dashboard"><span>◫</span> Painel</button>
+        <button class="nav-item" data-view="catalog"><span>⌁</span> Componentes</button>
+        <button class="nav-item" data-view="builder"><span>▦</span> PC Builder <i class="nav-dot"></i></button>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="sync-state"><b></b><span>Fontes por configurar</span></div>
+        <button class="quiet-button" id="installButton" hidden>⇩ Instalar a app</button>
+        <p>Fontes autorizadas são configuradas no servidor local.</p>
+      </div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <button class="mobile-brand" data-view="dashboard" aria-label="Ir para o painel"><span class="brand-mark">R</span></button>
+        <div class="search"><span>⌕</span><input id="searchInput" type="search" placeholder="Procurar CPU, GPU, RAM…" aria-label="Procurar componentes"></div>
+        <div class="top-actions"><button class="icon-button" id="themeButton" aria-label="Alternar contraste">◐</button><button class="refresh" id="refreshButton"><span>↻</span> Atualizar preços</button></div>
+      </header>
+
+      <section id="dashboard" class="view active" aria-labelledby="dashboardTitle">
+        <div class="page-heading"><div><p class="eyebrow">Visão geral</p><h1 id="dashboardTitle">Bem-vindo ao RigRadar.</h1><p class="subhead">Segue oportunidades, sem perder de vista o contexto.</p></div><div class="updated" id="updatedLabel">Dados de exemplo · sem leituras reais</div></div>
+        <div class="stat-grid">
+          <article class="stat-card"><span class="stat-icon teal">⌁</span><div><p>A seguir</p><strong id="followCount">4</strong><small>componentes guardados</small></div></article>
+          <article class="stat-card"><span class="stat-icon amber">↓</span><div><p>Em queda</p><strong id="fallingCount">0</strong><small>no histórico disponível</small></div></article>
+          <article class="stat-card"><span class="stat-icon violet">◷</span><div><p>Preços reais</p><strong id="liveCount">0</strong><small>peças com leituras autorizadas</small></div></article>
+        </div>
+        <div class="dashboard-grid">
+          <article class="panel trend-panel"><div class="panel-head"><div><p class="eyebrow">Preço em foco</p><h2>RTX 4070 SUPER</h2></div><button class="link-button" data-open-product="gpu4070">Ver detalhe →</button></div><div class="price-line"><strong id="focusPrice">€629</strong><span class="pill good" id="focusChange">↓ 8,2% em 30 dias</span><span class="muted" id="focusLow">mín. €609</span></div><div class="chart-wrap"><svg id="trendChart" viewBox="0 0 660 205" role="img" aria-label="Evolução de preço da RTX 4070 SUPER"><defs><linearGradient id="linefill" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#56e0ae" stop-opacity=".28"/><stop offset="1" stop-color="#56e0ae" stop-opacity="0"/></linearGradient></defs><path class="chart-grid" d="M0 20H660M0 74H660M0 128H660M0 182H660"/><path id="chartArea" fill="url(#linefill)"/><path id="chartLine" fill="none" stroke="#56e0ae" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg><div class="chart-axis"><span>Início</span><span>Mais recente</span></div></div><div class="store-legend" id="focusStores"><span><i class="dot green"></i>PCDIGA <b>€629</b></span><span><i class="dot orange"></i>Globaldata <b>€639</b></span><span><i class="dot gray"></i>Amazon ES <b>€649</b></span></div></article>
+          <article class="panel deal-panel"><div class="panel-head"><div><p class="eyebrow">Índice de valor de exemplo</p><h2>Destaque do catálogo</h2></div><span class="score">9.3 <small>/10</small></span></div><div class="deal-product"><div class="gpu-art"><span>RX</span><b>7800 XT</b></div><div><h3>AMD Radeon RX 7800 XT</h3><p>1440p / 16 GB VRAM</p><strong id="dealPrice">€519</strong><span class="muted" id="dealValue"> · preço de exemplo</span></div></div><div class="meter"><div class="meter-row"><span>Desempenho / €</span><b>Excelente</b></div><div class="track"><i style="width:93%"></i></div></div><button class="secondary-button" data-open-product="gpu7800">Comparar alternativas</button></article>
+        </div>
+        <section class="watch-section"><div class="section-title"><div><p class="eyebrow">Lista seguida</p><h2>Próximas oportunidades</h2></div><button class="link-button" data-view="catalog">Ver catálogo →</button></div><div class="watch-list" id="watchList"></div></section>
+      </section>
+
+      <section id="catalog" class="view" aria-labelledby="catalogTitle">
+        <div class="page-heading"><div><p class="eyebrow">Catálogo acompanhado</p><h1 id="catalogTitle">Componentes e histórico</h1><p class="subhead">Preços de exemplo até a recolha autorizada trazer valores reais.</p></div><button class="refresh" id="catalogRefresh"><span>↻</span> Atualizar</button></div>
+        <div class="filter-row" role="group" aria-label="Filtrar por categoria"><button class="filter active" data-filter="all">Tudo</button><button class="filter" data-filter="GPU">GPU</button><button class="filter" data-filter="CPU">CPU</button><button class="filter" data-filter="Motherboard">Motherboard</button><button class="filter" data-filter="RAM">Memória</button><button class="filter" data-filter="Armazenamento">Armazenamento</button><button class="filter" data-filter="Fonte">Fonte</button><button class="filter" data-filter="Caixa">Caixa</button><button class="filter" data-filter="Cooler">Cooler</button></div>
+        <div class="catalog-grid" id="catalogGrid"></div>
+      </section>
+
+      <section id="product" class="view" aria-labelledby="productTitle">
+        <button class="back-button" data-view="catalog">← Voltar aos componentes</button>
+        <div id="productDetail"></div>
+      </section>
+
+      <section id="builder" class="view" aria-labelledby="builderTitle">
+        <div class="page-heading"><div><p class="eyebrow">PC Builder</p><h1 id="builderTitle">A tua build, sem surpresas.</h1><p class="subhead">Escolhe peças. A compatibilidade é validada à medida que avanças.</p></div><div class="budget"><span>Total estimado</span><strong id="buildTotal">€0</strong></div></div>
+        <div class="builder-layout"><section class="builder-main"><div class="compatibility-summary" id="compatibilitySummary"></div><div class="component-slots" id="componentSlots"></div></section><aside class="assistant-panel"><div class="assistant-head"><span class="assistant-avatar">✦</span><div><p class="eyebrow">Assistente da build</p><h2>Em que posso ajudar?</h2></div></div><div class="chat-messages" id="chatMessages"><div class="chat-bubble bot">Posso analisar a seleção atual, explicar avisos e sugerir melhorias. Se a IA não estiver configurada, respondo com a análise local.</div></div><div class="prompt-chips"><button data-prompt="Há algum gargalo nesta build?">Gargalos?</button><button data-prompt="Esta fonte é suficiente?">Fonte suficiente?</button><button data-prompt="Que peça devo melhorar?">O que melhorar?</button></div><form class="chat-form" id="chatForm"><input id="chatInput" placeholder="Pergunta sobre a tua build…" aria-label="Pergunta ao assistente"><button aria-label="Enviar pergunta">↑</button></form><p class="privacy-note">Com IA configurada, a pergunta e a build são enviadas à OpenAI pelo servidor. A chave fica apenas no servidor.</p></aside></div>
+      </section>
+    </main>
+  </div>
+  <nav class="mobile-nav" aria-label="Navegação móvel"><button class="active" data-view="dashboard">◫<span>Painel</span></button><button data-view="catalog">⌁<span>Componentes</span></button><button data-view="builder">▦<span>Builder</span></button></nav>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="app.js?v=5"></script>
+</body>
+</html>
