@@ -4,9 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * *'
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -22,6 +24,29 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Testar backend
+        run: node --test server/server.test.mjs
+      - name: Recolher preços autorizados e gerar snapshot
+        if: github.event_name != 'push'
+        env:
+          RIGRADAR_SOURCES_JSON: ${{ secrets.RIGRADAR_SOURCES_JSON }}
+          RIGRADAR_CONTACT: ${{ vars.RIGRADAR_CONTACT }}
+          KUANTOKUSTA_FEED_TOKEN: ${{ secrets.KUANTOKUSTA_FEED_TOKEN }}
+          IDEALO_FEED_TOKEN: ${{ secrets.IDEALO_FEED_TOKEN }}
+        run: node server/collect-prices.mjs
+      - name: Guardar histórico e snapshot
+        if: github.event_name != 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dist/prices.json data/prices.sqlite
+          if ! git diff --cached --quiet; then
+            git commit -m "Atualizar histórico de preços"
+            git push origin HEAD:main
+          fi
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
