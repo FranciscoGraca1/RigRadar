@@ -1,0 +1,48 @@
+{
+  "sources": [
+    {
+      "id": "kuantokusta",
+      "name": "KuantoKusta",
+      "type": "partner-json",
+      "enabled": false,
+      "authorized": false,
+      "url": null,
+      "host": null,
+      "tokenEnv": "KUANTOKUSTA_FEED_TOKEN",
+      "minRefreshMinutes": 10
+    },
+    {
+      "id": "idealo",
+      "name": "idealo",
+      "type": "partner-json",
+      "enabled": false,
+      "authorized": false,
+      "url": null,
+      "host": null,
+      "tokenEnv": "IDEALO_FEED_TOKEN",
+      "minRefreshMinutes": 10
+    },
+    {
+      "id": "pcdiga",
+      "name": "PCDIGA",
+      "type": "product-jsonld",
+      "enabled": false,
+      "authorized": false,
+      "host": "www.pcdiga.com",
+      "robotsUrl": "https://www.pcdiga.com/robots.txt",
+      "products": {},
+      "minRefreshMinutes": 60
+    },
+    {
+      "id": "pccomponentes",
+      "name": "PcComponentes",
+      "type": "product-jsonld",
+      "enabled": false,
+      "authorized": false,
+      "host": "www.pccomponentes.pt",
+      "robotsUrl": "https://www.pccomponentes.pt/robots.txt",
+      "products": {},
+      "minRefreshMinutes": 60
+    }
+  ]
+}
