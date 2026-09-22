@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { createPriceService, internals } from './price-service.mjs';
 import { askAssistant } from './assistant.mjs';
 
@@ -11,17 +12,20 @@ test('recolhe um feed autorizado, guarda observações e reutiliza a cache da lo
   let calls = 0;
   const source = { id:'feed', name:'Feed', type:'partner-json', enabled:true, authorized:true, host:'feed.example', url:'https://feed.example/offers.json', minRefreshMinutes:10 };
   const fetchImpl = async () => { calls++; return new Response(JSON.stringify([{ sku:'cpu7600', store:'Loja A', price:199.99, url:'https://loja.example/cpu', availability:'Em stock' }]), { status:200, headers:{ 'Content-Type':'application/json' } }); };
+  let service, reopened;
   try {
-    const service = createPriceService({ catalog:[{ id:'cpu7600' }], sources:[source], dataDir, fetchImpl });
+    service = createPriceService({ catalog:[{ id:'cpu7600' }], sources:[source], dataDir, fetchImpl });
     await service.load();
     await service.refresh(); await service.refresh();
     assert.equal(calls, 1);
     assert.equal(service.current()[0].price, 199.99);
     assert.equal(service.current()[0].history.length, 1);
-    const reopened = createPriceService({ catalog:[{ id:'cpu7600' }], sources:[source], dataDir, fetchImpl });
+    reopened = createPriceService({ catalog:[{ id:'cpu7600' }], sources:[source], dataDir, fetchImpl });
     await reopened.load();
     assert.equal(reopened.current()[0].stores[0].url, 'https://loja.example/cpu');
-  } finally { await rm(dataDir, { recursive:true, force:true }); }
+    assert.equal(reopened.status()[0].status, 'atualizada');
+    assert.equal(reopened.current()[0].sampleCount, 1);
+  } finally { reopened?.close(); service?.close(); await rm(dataDir, { recursive:true, force:true }); }
 });
 
 test('uma fonte com erro não impede outra de atualizar', async () => {
@@ -31,13 +35,14 @@ test('uma fonte com erro não impede outra de atualizar', async () => {
     { id:'good', name:'Disponível', type:'partner-json', enabled:true, authorized:true, host:'good.example', url:'https://good.example/offers', minRefreshMinutes:10 }
   ];
   const fetchImpl = async url => url.includes('bad.example') ? new Response('erro', { status:503 }) : new Response(JSON.stringify([{ sku:'cpu7600', store:'Loja B', price:190, url:'https://loja-b.example/cpu', availability:'Em stock' }]), { status:200 });
+  let service;
   try {
-    const service = createPriceService({ catalog:[{ id:'cpu7600' }], sources, dataDir, fetchImpl });
+    service = createPriceService({ catalog:[{ id:'cpu7600' }], sources, dataDir, fetchImpl });
     const states = await service.refresh();
     assert.equal(states[0].status, 'erro');
     assert.equal(states[1].status, 'atualizada');
     assert.equal(service.current()[0].price, 190);
-  } finally { await rm(dataDir, { recursive:true, force:true }); }
+  } finally { service?.close(); await rm(dataDir, { recursive:true, force:true }); }
 });
 
 test('respeita robots.txt e extrai preço JSON-LD', () => {
@@ -46,6 +51,36 @@ test('respeita robots.txt e extrai preço JSON-LD', () => {
   assert.equal(internals.robotsAllowed(robots, '/produto/privado'), false);
   assert.equal(internals.robotsAllowed(robots, '/produto/privado/info'), true);
   assert.deepEqual(internals.parseProductJsonLd('<script type="application/ld+json">{"@type":"Product","offers":{"price":199.9,"availability":"https://schema.org/InStock"}}</script>'), { price:199.9, availability:'Em stock' });
+});
+
+test('sem fontes autorizadas, não inventa preços reais', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'rigradar-test-'));
+  const service = createPriceService({ catalog:[{ id:'cpu7600' }], sources:[], dataDir });
+  try {
+    await service.refresh();
+    assert.equal(service.current()[0].price, null);
+    assert.equal(service.current()[0].sampleCount, 0);
+  } finally { service.close(); await rm(dataDir, { recursive:true, force:true }); }
+});
+
+test('mínimo e média usam apenas leituras em stock no período pedido', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'rigradar-test-'));
+  const now = Date.parse('2026-09-22T12:00:00.000Z');
+  const service = createPriceService({ catalog:[{ id:'cpu7600' }], sources:[], dataDir, now:() => now });
+  try {
+    const db = new DatabaseSync(join(dataDir, 'prices.sqlite'));
+    const add = db.prepare('INSERT INTO price_history (component_id, source_id, store, price_cents, availability, url, collected_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    add.run('cpu7600','feed','Loja A',10000,'Em stock','https://loja.example/a','2026-09-01T12:00:00.000Z');
+    add.run('cpu7600','feed','Loja A',20000,'Em stock','https://loja.example/a','2026-09-20T12:00:00.000Z');
+    add.run('cpu7600','feed','Loja B',5000,'Indisponível','https://loja.example/b','2026-09-21T12:00:00.000Z');
+    db.close();
+    assert.equal(service.current(7)[0].low, 200);
+    assert.equal(service.current(7)[0].avg, 200);
+    assert.equal(service.current(7)[0].sampleCount, 1);
+    assert.equal(service.current(30)[0].low, 100);
+    assert.equal(service.current(30)[0].avg, 150);
+    assert.equal(service.current(30)[0].price, 200);
+  } finally { service.close(); await rm(dataDir, { recursive:true, force:true }); }
 });
 
 test('assistente usa a API apenas com chave no servidor e contexto válido', async () => {
