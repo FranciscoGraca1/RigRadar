@@ -36,7 +36,9 @@ function recommendBuild({ options, budget, use = 'gaming', resolution = '1440p',
     }
     const slot = slots[index];
     for (const item of options[slot]) {
-      if (item.priceSource === 'live' && !['Em stock','Limitado'].includes(item.availability)) continue;
+      // Peças com leitura real só entram se forem compráveis agora (fresca e em stock);
+      // peças de exemplo entram, e a interface avisa que o preço é demonstrativo.
+      if (item.priceSource === 'live' && !(item.priceState === 'atual' && ['Em stock','Limitado'].includes(item.availability))) continue;
       choice[slot] = item.id; visit(index + 1, choice, total + item.price);
     }
   }

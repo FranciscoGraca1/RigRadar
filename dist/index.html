@@ -48,7 +48,7 @@
       </section>
 
       <section id="catalog" class="view" aria-labelledby="catalogTitle">
-        <div class="page-heading"><div><p class="eyebrow">Catálogo acompanhado</p><h1 id="catalogTitle">Componentes e histórico</h1><p class="subhead">Preços de exemplo até a recolha autorizada trazer valores reais.</p><p class="source-note" id="sourceStatus">Nenhuma fonte autorizada ativa. Os preços apresentados são de exemplo.</p></div><button class="refresh" id="catalogRefresh"><span>↻</span> Atualizar</button></div>
+        <div class="page-heading"><div><p class="eyebrow">Catálogo acompanhado</p><h1 id="catalogTitle">Componentes e histórico</h1><p class="subhead">Cada preço indica se é uma leitura real, desatualizada, sem stock ou um valor de exemplo.</p><p class="source-note" id="sourceStatus">Nenhuma fonte autorizada ativa. Os preços apresentados são de exemplo.</p></div><button class="refresh" id="catalogRefresh"><span>↻</span> Atualizar</button></div>
         <div class="filter-row" role="group" aria-label="Filtrar por categoria"><button class="filter active" data-filter="all">Tudo</button><button class="filter" data-filter="GPU">GPU</button><button class="filter" data-filter="CPU">CPU</button><button class="filter" data-filter="Motherboard">Motherboard</button><button class="filter" data-filter="RAM">Memória</button><button class="filter" data-filter="Armazenamento">Armazenamento</button><button class="filter" data-filter="Fonte">Fonte</button><button class="filter" data-filter="Caixa">Caixa</button><button class="filter" data-filter="Cooler">Cooler</button></div>
         <div class="catalog-grid" id="catalogGrid"></div>
       </section>
@@ -67,7 +67,8 @@
   </div>
   <nav class="mobile-nav" aria-label="Navegação móvel"><button class="active" data-view="dashboard">◫<span>Painel</span></button><button data-view="catalog">⌁<span>Componentes</span></button><button data-view="builder">▦<span>Builder</span></button></nav>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="recommend.js?v=3"></script>
-  <script src="app.js?v=10"></script>
+  <script src="price-state.js"></script>
+  <script src="recommend.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>

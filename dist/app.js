@@ -6,10 +6,15 @@ fetch('./catalog.json').then(response => {
 }).then(components => {
 const slots = ['CPU','Motherboard','RAM','GPU','Armazenamento','Fonte','Caixa','Cooler'];
 const buildOptions = Object.fromEntries(slots.map(slot => [slot, components.filter(item => item.category === slot)]));
-const persisted = JSON.parse(localStorage.getItem('rigradar-build') || '{}');
-const selections = Object.fromEntries(slots.map(slot => [slot, persisted[slot] ?? (slot === 'CPU' ? 'cpu7600' : slot === 'Motherboard' ? 'boardb650' : slot === 'RAM' ? 'ram32' : slot === 'GPU' ? 'gpu4070' : slot === 'Armazenamento' ? 'ssd2tb' : slot === 'Fonte' ? 'psu750' : slot === 'Caixa' ? 'case4000d' : 'peerless')]));
-let followed = new Set(JSON.parse(localStorage.getItem('rigradar-followed') || '["gpu4070","cpu7600","ram32","ssd2tb"]'));
-let targets = JSON.parse(localStorage.getItem('rigradar-targets') || '{}');
+const PS = window.RigRadarPriceState;
+// Valores guardados podem estar corrompidos ou ter SKUs que já não existem no catálogo:
+// lê-los com validação para nunca bloquear o arranque (ver test/price-state.test.mjs).
+const persisted = PS.readStored(localStorage, 'rigradar-build', {}, PS.isPlainObject);
+const selections = Object.fromEntries(slots.map(slot => [slot, buildOptions[slot].some(item => item.id === persisted[slot]) ? persisted[slot] : (slot === 'CPU' ? 'cpu7600' : slot === 'Motherboard' ? 'boardb650' : slot === 'RAM' ? 'ram32' : slot === 'GPU' ? 'gpu4070' : slot === 'Armazenamento' ? 'ssd2tb' : slot === 'Fonte' ? 'psu750' : slot === 'Caixa' ? 'case4000d' : 'peerless')]));
+let followed = new Set(PS.readStored(localStorage, 'rigradar-followed', ['gpu4070','cpu7600','ram32','ssd2tb'], value => Array.isArray(value) && value.every(id => typeof id === 'string')));
+let targets = Object.fromEntries(Object.entries(PS.readStored(localStorage, 'rigradar-targets', {}, PS.isPlainObject)).filter(([, value]) => Number.isFinite(value) && value > 0));
+// Metadados do último snapshot aplicado (idade e se veio da cache offline do service worker).
+let snapshotInfo = { generatedAt:null, offline:false, maxOfferAgeHours:PS.DEFAULT_MAX_OFFER_AGE_HOURS };
 let activeProduct = 'gpu4070';
 let activeFilter = 'all';
 let chartPeriod = 30;
@@ -22,9 +27,15 @@ const formatPrice = value => euro.format(value);
 const esc = value => String(value).replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
 function freshnessText(item) {
   if (item.priceSource !== 'live' || !item.observedAt) return 'Sem leituras reais; preço de exemplo.';
-  const days = Math.max(0, Math.floor((Date.now() - Date.parse(item.observedAt)) / 86_400_000));
-  return `Última leitura: ${new Date(item.observedAt).toLocaleString('pt-PT')} (${days === 0 ? 'hoje' : `há ${days} dia${days === 1 ? '' : 's'}`}) · ${item.sampleCount || 0} leituras disponíveis em 90 dias.`;
+  const when = `${new Date(item.observedAt).toLocaleString('pt-PT')} (${PS.ageText(item.observedAt)})`;
+  const samples = `${item.sampleCount || 0} leituras em stock nos últimos 90 dias.`;
+  if (item.priceState === 'desatualizado') return `Preço desatualizado: a última leitura é de ${when}, mais antiga do que ${snapshotInfo.maxOfferAgeHours} h. Não é uma oferta atual. ${samples}`;
+  if (item.priceState === 'sem stock') return `Sem stock nas lojas lidas em ${when}. O valor mostrado é o último lido, não uma oferta comprável. ${samples}`;
+  return `Última leitura: ${when} · ${samples}`;
 }
+const badgeHtml = item => { const badge = PS.priceBadge(item); return `<span class="price-badge ${badge.tone}">${badge.text}</span>`; };
+// Alerta de preço-alvo: só dispara com preço real, fresco e com stock.
+const targetReached = item => Boolean(targets[item.id]) && PS.isBuyable(item) && item.price <= targets[item.id];
 
 function liveSeries(item, days) {
   const cutoff = Date.now() - days * 86_400_000;
@@ -58,7 +69,7 @@ function attachChartHover(svg, points) {
   let dot = svg.querySelector('.chart-dot');
   if (!dot) { dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); dot.setAttribute('class','chart-dot hidden'); dot.setAttribute('r','5'); svg.append(dot); }
   const hide = () => { tooltip.classList.add('hidden'); guide.classList.add('hidden'); dot.classList.add('hidden'); };
-  svg.onpointermove = event => {
+  const show = event => {
     if (!points.length) return;
     const rect = svg.getBoundingClientRect();
     const x = (event.clientX - rect.left) / rect.width * 660;
@@ -70,8 +81,18 @@ function attachChartHover(svg, points) {
     tooltip.style.top = `${Math.max(point.y / 205 * rect.height - 42, 0)}px`;
     tooltip.classList.remove('hidden'); guide.classList.remove('hidden'); dot.classList.remove('hidden');
   };
-  svg.onpointerleave = hide; svg.onpointerup = hide; svg.onpointercancel = hide;
+  // Rato: mostra ao mover e esconde ao sair. Toque: um toque simples não gera pointermove
+  // e o pointerleave chega logo após o pointerup, por isso o tooltip fica visível até
+  // um toque fora do gráfico.
+  svg.onpointermove = show; svg.onpointerdown = show;
+  svg.onpointerleave = event => { if (event.pointerType === 'mouse') hide(); };
+  svg.onpointercancel = hide;
 }
+// Um único listener (os gráficos são recriados a cada render): um toque fora de um
+// gráfico esconde o tooltip, a guia e o ponto desse gráfico.
+document.addEventListener('pointerdown', event => {
+  document.querySelectorAll('.chart-wrap').forEach(wrap => { if (!wrap.contains(event.target)) wrap.querySelectorAll('.chart-tooltip, .chart-guide, .chart-dot').forEach(node => node.classList.add('hidden')); });
+});
 function renderChartInto(svg, history) {
   const points = computePoints(history);
   const line = points.map((point,index) => `${index ? 'L' : 'M'}${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ');
@@ -97,32 +118,34 @@ function renderDashboardPrices(liveCount = components.filter(item => item.priceS
   document.getElementById('focusPrice').textContent = formatPrice(focus.price);
   document.getElementById('focusChange').textContent = focus.change == null ? 'Sem tendência' : `${focus.change < 0 ? '↓' : '↑'} ${Math.abs(focus.change).toFixed(1).replace('.',',')}% no histórico`;
   document.getElementById('focusLow').textContent = focus.low == null ? 'sem mínimo' : `mín. ${formatPrice(focus.low)}`;
-  const offers = focus.liveOffers?.length ? focus.liveOffers.map(offer => [offer.store, offer.price]) : focus.stores;
+  const offers = focus.priceSource === 'live' ? (focus.liveOffers || []).map(offer => [offer.store, offer.price]) : focus.stores;
   document.getElementById('focusStores').innerHTML = offers.length ? offers.slice(0, 3).map((offer, index) => `<span><i class="dot ${['green','orange','gray'][index]}"></i>${esc(offer[0])} <b>${formatPrice(offer[1])}</b></span>`).join('') : '<span>Sem ofertas nesta leitura.</span>';
   document.getElementById('fallingCount').textContent = components.filter(item => followed.has(item.id) && item.change < 0).length;
   document.getElementById('liveCount').textContent = liveCount;
   document.getElementById('dealPrice').textContent = formatPrice(deal.price);
-  document.getElementById('dealValue').textContent = deal.priceSource === 'live' ? ' · preço recolhido' : ' · preço de exemplo';
+  document.getElementById('dealValue').textContent = ` · ${PS.priceBadge(deal).text.toLowerCase()}`;
 }
 function renderWatchList() {
   const list = document.getElementById('watchList');
   const items = components.filter(item => item.trackable !== false && followed.has(item.id));
   document.getElementById('followCount').textContent = items.length;
   if (!items.length) { list.innerHTML = '<p class="source-note">Ainda não segues nenhum componente. No catálogo, usa o botão “Seguir”.</p>'; return; }
-  list.innerHTML = items.map(item => `<article class="watch-row"><div class="mini-art">${item.art}</div><div class="watch-name">${esc(item.short)}<small>${esc(item.model.split('·')[0].trim())}${targets[item.id] ? ` · Alvo ${formatPrice(targets[item.id])}` : ''}</small></div><div class="watch-value">${formatPrice(item.price)}<small>${item.low == null ? 'sem histórico' : `mín. ${formatPrice(item.low)}`}</small></div><div class="watch-status ${targets[item.id] && item.priceSource === 'live' && ['Em stock','Limitado'].includes(item.availability) && item.price <= targets[item.id] ? 'down' : item.change == null ? 'flat' : item.change < 0 ? 'down' : item.change > 0 ? 'up':'flat'}">${targets[item.id] && item.priceSource === 'live' && ['Em stock','Limitado'].includes(item.availability) && item.price <= targets[item.id] ? 'Alvo atingido' : item.change == null ? 'Sem tendência' : `${item.change < 0 ? '↓' : item.change > 0 ? '↑' : '—'} ${Math.abs(item.change).toFixed(1).replace('.',',')}%`}</div><div class="watch-store">${esc(item.store)}</div><button class="row-action" data-toggle-follow="${item.id}" aria-label="Deixar de seguir ${esc(item.name)}">×</button></article>`).join('');
+  list.innerHTML = items.map(item => `<article class="watch-row"><div class="mini-art">${item.art}</div><div class="watch-name">${esc(item.short)}<small>${esc(item.model.split('·')[0].trim())}${targets[item.id] ? ` · Alvo ${formatPrice(targets[item.id])}` : ''}</small></div><div class="watch-value">${formatPrice(item.price)}<small>${item.low == null ? 'sem histórico' : `mín. ${formatPrice(item.low)}`}</small></div><div class="watch-status ${targetReached(item) ? 'down' : item.change == null ? 'flat' : item.change < 0 ? 'down' : item.change > 0 ? 'up':'flat'}">${targetReached(item) ? 'Alvo atingido' : item.change == null ? 'Sem tendência' : `${item.change < 0 ? '↓' : item.change > 0 ? '↑' : '—'} ${Math.abs(item.change).toFixed(1).replace('.',',')}%`}</div><div class="watch-store">${esc(item.store)}${badgeHtml(item)}</div><button class="row-action" data-toggle-follow="${item.id}" aria-label="Deixar de seguir ${esc(item.name)}">×</button></article>`).join('');
 }
 function renderCatalog() {
   const grid = document.getElementById('catalogGrid');
   const query = document.getElementById('searchInput').value.trim().toLowerCase();
   const items = components.filter(item => item.trackable !== false && (activeFilter === 'all' || item.category === activeFilter) && (`${item.name} ${item.short} ${item.category}`.toLowerCase().includes(query)));
-  grid.innerHTML = items.map(item => `<article class="catalog-card"><div class="catalog-card-top"><span class="category-label">${item.category}</span><button class="row-action" data-toggle-follow="${item.id}" aria-label="${followed.has(item.id) ? 'Deixar de seguir' : 'Seguir'} ${esc(item.name)}">${followed.has(item.id) ? '★' : '☆'}</button></div><h2>${esc(item.name)}</h2><p>${esc(item.model)}</p><div class="card-price"><strong>${formatPrice(item.price)}</strong><span>${item.change == null ? 'Sem tendência' : `${item.change < 0 ? '↓' : '↑'} ${Math.abs(item.change).toFixed(1).replace('.',',')}% / 30d`}</span></div><div class="card-foot"><span>${esc(item.store)} · ${item.low == null ? 'sem mínimo' : `${formatPrice(item.low)} mín.`}<br>${esc(freshnessText(item))}</span><button data-open-product="${item.id}">Ver histórico →</button></div></article>`).join('') || '<p class="source-note">Não encontrei componentes com esse termo.</p>';
+  grid.innerHTML = items.map(item => `<article class="catalog-card"><div class="catalog-card-top"><span class="category-label">${item.category}</span><button class="row-action" data-toggle-follow="${item.id}" aria-label="${followed.has(item.id) ? 'Deixar de seguir' : 'Seguir'} ${esc(item.name)}">${followed.has(item.id) ? '★' : '☆'}</button></div><h2>${esc(item.name)}</h2><p>${esc(item.model)}</p><div class="card-price"><div class="card-price-main"><strong>${formatPrice(item.price)}</strong>${badgeHtml(item)}</div><span class="card-trend">${item.change == null ? 'Sem tendência' : `${item.change < 0 ? '↓' : '↑'} ${Math.abs(item.change).toFixed(1).replace('.',',')}% / 30d`}</span></div><div class="card-foot"><span>${esc(item.store)} · ${item.low == null ? 'sem mínimo' : `${formatPrice(item.low)} mín.`}<br>${esc(freshnessText(item))}</span><button data-open-product="${item.id}">Ver histórico →</button></div></article>`).join('') || '<p class="source-note">Não encontrei componentes com esse termo.</p>';
 }
 function renderProduct() {
   const item = byId(activeProduct); if (!item) return;
   const history = chartHistory(item);
   const graph = history.length > 1 ? `<div class="chart-wrap"><svg viewBox="0 0 660 205" role="img" aria-label="Gráfico do histórico de preços"><defs><linearGradient id="detailfill" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#56e0ae" stop-opacity=".28"/><stop offset="1" stop-color="#56e0ae" stop-opacity="0"/></linearGradient></defs><path class="chart-grid" d="M0 20H660M0 74H660M0 128H660M0 182H660"/><path data-chart-area fill="url(#detailfill)"/><path data-chart-line fill="none" stroke="#56e0ae" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg><div class="chart-axis"><span>Início</span><span>Mais recente</span></div></div>` : '<p class="source-note">Ainda não há leituras suficientes neste período para desenhar o gráfico.</p>';
-  const offers = item.liveOffers?.length ? item.liveOffers.map(offer => `<div class="history-row"><a href="${esc(offer.url)}" target="_blank" rel="noopener noreferrer">${esc(offer.store)}</a><b>${formatPrice(offer.price)}</b><span>${esc(offer.availability)}</span></div><small class="muted">Lido em ${new Date(offer.observedAt).toLocaleString('pt-PT')}</small>`).join('') : item.stores.map(store => `<div class="history-row"><span>${esc(store[0])}</span><b>${formatPrice(store[1])}</b><span>${esc(store[2])}</span></div>`).join('');
-  document.getElementById('productDetail').innerHTML = `<div class="product-hero"><div class="product-hero-art"><b>${esc(item.art)}<br><small>${esc(item.short)}</small></b></div><article class="product-overview"><p class="eyebrow">${item.category} · ${followed.has(item.id) ? 'A seguir' : 'Catálogo'}</p><h1 id="productTitle">${esc(item.name)}</h1><p class="model">${esc(item.model)}</p><div class="detail-price"><strong>${formatPrice(item.price)}</strong><span class="pill good">${item.change == null ? 'Sem tendência' : `${item.change < 0 ? '↓' : '↑'} ${Math.abs(item.change).toFixed(1).replace('.',',')}% / 30 dias`}</span></div><div class="detail-stats"><div class="detail-stat"><span>Mínimo ${item.priceSource === 'live' ? 'real · 90 d' : 'de exemplo'}</span><b>${item.low == null ? '—' : formatPrice(item.low)}</b></div><div class="detail-stat"><span>Média ${item.priceSource === 'live' ? 'real · 90 d' : 'de exemplo'}</span><b>${item.avg == null ? '—' : formatPrice(item.avg)}</b></div><div class="detail-stat"><span>Índice valor</span><b>${item.score == null ? '—' : `${item.score} / 10`}</b></div></div><p class="source-note">${esc(freshnessText(item))}</p><label class="target-field">Preço-alvo (€)<input type="number" min="1" step="0.01" data-target="${item.id}" value="${targets[item.id] || ''}" placeholder="Definir alerta local"></label>${targets[item.id] && item.priceSource === 'live' && ['Em stock','Limitado'].includes(item.availability) && item.price <= targets[item.id] ? '<p class="target-reached">✓ O preço real atingiu o teu alvo.</p>' : ''}</article></div><div class="product-grid"><article class="panel"><div class="panel-head"><div><p class="eyebrow">Histórico de preço</p><h2>${item.priceSource === 'live' ? 'Leituras reais' : 'Dados de exemplo'}</h2></div><span class="muted">Preço mais baixo é melhor</span></div><div class="period-row">${[7,30,90,365].map(days => `<button data-period="${days}" class="filter${chartPeriod === days ? ' active' : ''}" ${item.priceSource !== 'live' ? 'disabled title="Períodos disponíveis após recolhas reais"' : ''}>${days === 365 ? '1 ano' : `${days} dias`}</button>`).join('')}</div>${graph}</article><article class="panel"><p class="eyebrow">${item.priceSource === 'live' ? 'Ofertas recolhidas' : 'Ofertas de exemplo'}</p><h2>Por loja</h2><div class="history-table">${offers || '<p class="source-note">Ainda não há ofertas recolhidas.</p>'}</div><p class="source-note">${item.priceSource === 'live' ? 'Confirma preço e stock na loja antes de comprar. O alerta é local a este navegador; não envia notificações.' : 'Valores demonstrativos; ainda não foram recolhidos preços desta peça.'}</p></article></div>`;
+  // Uma peça com leituras reais nunca volta a mostrar as lojas de exemplo, mesmo sem ofertas atuais.
+  // Links só para https: o URL vem de dados externos (feed/snapshot).
+  const offers = item.priceSource === 'live' ? (item.liveOffers || []).map(offer => `<div class="history-row">${/^https:\/\//.test(offer.url || '') ? `<a href="${esc(offer.url)}" target="_blank" rel="noopener noreferrer">${esc(offer.store)}</a>` : `<span>${esc(offer.store)}</span>`}<b>${formatPrice(offer.price)}</b><span>${esc(offer.availability)}</span></div><small class="muted">Lido em ${new Date(offer.observedAt).toLocaleString('pt-PT')}</small>`).join('') : item.stores.map(store => `<div class="history-row"><span>${esc(store[0])}</span><b>${formatPrice(store[1])}</b><span>${esc(store[2])}</span></div>`).join('');
+  document.getElementById('productDetail').innerHTML = `<div class="product-hero"><div class="product-hero-art"><b>${esc(item.art)}<br><small>${esc(item.short)}</small></b></div><article class="product-overview"><p class="eyebrow">${item.category} · ${followed.has(item.id) ? 'A seguir' : 'Catálogo'}</p><h1 id="productTitle">${esc(item.name)}</h1><p class="model">${esc(item.model)}</p><div class="detail-price"><strong>${formatPrice(item.price)}</strong>${badgeHtml(item)}<span class="pill good">${item.change == null ? 'Sem tendência' : `${item.change < 0 ? '↓' : '↑'} ${Math.abs(item.change).toFixed(1).replace('.',',')}% / 30 dias`}</span></div><div class="detail-stats"><div class="detail-stat"><span>Mínimo ${item.priceSource === 'live' ? 'real · 90 d' : 'de exemplo'}</span><b>${item.low == null ? '—' : formatPrice(item.low)}</b></div><div class="detail-stat"><span>Média ${item.priceSource === 'live' ? 'real · 90 d' : 'de exemplo'}</span><b>${item.avg == null ? '—' : formatPrice(item.avg)}</b></div><div class="detail-stat"><span>Índice valor</span><b>${item.score == null ? '—' : `${item.score} / 10`}</b></div></div><p class="source-note">${esc(freshnessText(item))}</p><label class="target-field">Preço-alvo (€)<input type="number" min="1" step="0.01" data-target="${item.id}" value="${targets[item.id] || ''}" placeholder="Definir alerta local"></label>${targetReached(item) ? '<p class="target-reached">✓ O preço real atingiu o teu alvo.</p>' : ''}</article></div><div class="product-grid"><article class="panel"><div class="panel-head"><div><p class="eyebrow">Histórico de preço</p><h2>${item.priceSource === 'live' ? 'Leituras reais' : 'Dados de exemplo'}</h2></div><span class="muted">Preço mais baixo é melhor</span></div><div class="period-row">${[7,30,90,365].map(days => `<button data-period="${days}" class="filter${chartPeriod === days ? ' active' : ''}" ${item.priceSource !== 'live' ? 'disabled title="Períodos disponíveis após recolhas reais"' : ''}>${days === 365 ? '1 ano' : `${days} dias`}</button>`).join('')}</div>${graph}</article><article class="panel"><p class="eyebrow">${item.priceSource === 'live' ? 'Ofertas recolhidas' : 'Ofertas de exemplo'}</p><h2>Por loja</h2><div class="history-table">${offers || `<p class="source-note">${item.priceState === 'desatualizado' ? 'Não há ofertas atuais: a última leitura é demasiado antiga para ser apresentada como oferta.' : 'Ainda não há ofertas recolhidas.'}</p>`}</div><p class="source-note">${item.priceSource === 'live' ? 'Confirma preço e stock na loja antes de comprar. O alerta é local a este navegador; não envia notificações.' : 'Valores demonstrativos; ainda não foram recolhidos preços desta peça.'}</p></article></div>`;
   const svg = document.querySelector('#productDetail .chart-wrap svg'); if (svg) renderChartInto(svg, history);
 }
 function getCompatibility(choice = selections) {
@@ -198,42 +221,68 @@ function switchView(view) {
   document.querySelectorAll('[data-view]').forEach(button => button.classList.toggle('active', button.dataset.view === view));
   if (view === 'catalog') renderCatalog(); if (view === 'builder') renderBuilder(); window.scrollTo({top:0,behavior:'smooth'});
 }
-function applyPriceData(data) {
-  let liveCount = 0;
+function applyPriceData(data, { offline = false } = {}) {
+  if (!PS.isPlainObject(data)) throw new Error('Snapshot de preços inválido.');
+  const maxOfferAgeHours = Number.isFinite(data.maxOfferAgeHours) && data.maxOfferAgeHours > 0 ? data.maxOfferAgeHours : PS.DEFAULT_MAX_OFFER_AGE_HOURS;
+  snapshotInfo = { generatedAt:typeof data.generatedAt === 'string' && !Number.isNaN(Date.parse(data.generatedAt)) ? data.generatedAt : null, offline, maxOfferAgeHours };
+  const counts = { atual:0, 'sem stock':0, desatualizado:0 };
   let newestReading = null;
-  for (const update of data.components || []) {
-    const item = byId(update.id);
-    if (!item || !Number.isFinite(update.price) || update.price <= 0) continue;
-    item.price = update.price; item.low = update.low; item.avg = update.avg; item.store = update.store; item.priceSource = 'live'; item.liveOffers = update.stores || [];
-    item.priceHistory = (update.history || []).filter(point => Number.isFinite(point.price) && !Number.isNaN(Date.parse(point.timestamp)));
-    item.observedAt = update.observedAt; item.sampleCount = update.sampleCount; item.availability = update.availability;
-    if (update.observedAt && (!newestReading || update.observedAt > newestReading)) newestReading = update.observedAt;
+  for (const update of Array.isArray(data.components) ? data.components : []) {
+    const item = byId(update?.id); const state = PS.priceStateOf(update, { maxOfferAgeHours });
+    // 'sem leituras' mantém os valores de exemplo do catálogo, que continuam rotulados como tal.
+    if (!item || !state || state.state === 'sem leituras') continue;
+    const ref = state.reference;
+    // Em 'sem stock'/'desatualizado' o preço visível é a última leitura (para contexto e para
+    // o total do builder), mas priceState impede que conte como oferta comprável.
+    item.price = ref.price; item.store = ref.store; item.availability = ref.availability; item.observedAt = ref.observedAt;
+    item.priceSource = 'live'; item.priceState = state.state;
+    item.low = state.low; item.avg = state.avg; item.sampleCount = state.sampleCount;
+    item.liveOffers = state.stores; item.priceHistory = state.history;
+    if (!newestReading || ref.observedAt > newestReading) newestReading = ref.observedAt;
     const recent = liveSeries(item, 30);
-    if (recent.length > 1) item.change = Math.round((recent.at(-1).price / recent[0].price - 1) * 1000) / 10;
-    else item.change = null;
-    liveCount++;
+    item.change = recent.length > 1 ? Math.round((recent.at(-1).price / recent[0].price - 1) * 1000) / 10 : null;
+    counts[state.state]++;
   }
+  const liveCount = counts.atual;
   renderDashboardPrices(liveCount);
-  document.getElementById('updatedLabel').textContent = liveCount ? `Última leitura real · ${new Date(newestReading).toLocaleString('pt-PT')}` : 'Dados de exemplo · sem leituras reais';
-  document.querySelector('.sync-state span').textContent = liveCount ? `${liveCount} peças com preços reais` : 'Fontes por configurar';
+  const snapshotText = snapshotInfo.generatedAt ? `snapshot de ${new Date(snapshotInfo.generatedAt).toLocaleString('pt-PT')} (${PS.ageText(snapshotInfo.generatedAt)})` : 'snapshot sem data';
+  const offlineText = offline ? ' · cópia offline' : '';
+  document.getElementById('updatedLabel').textContent = newestReading ? `Última leitura real · ${new Date(newestReading).toLocaleString('pt-PT')} · ${snapshotText}${offlineText}` : `Dados de exemplo · sem leituras reais · ${snapshotText}${offlineText}`;
+  const staleText = counts.desatualizado ? `, ${counts.desatualizado} desatualizada${counts.desatualizado > 1 ? 's' : ''}` : '';
+  document.querySelector('.sync-state span').textContent = liveCount || counts.desatualizado || counts['sem stock'] ? `${liveCount} peça${liveCount === 1 ? '' : 's'} com preço atual${staleText}` : 'Fontes por configurar';
   const sourceStatus = document.getElementById('sourceStatus');
-  if (sourceStatus) sourceStatus.textContent = (data.sources || []).filter(source => source.status === 'erro' || source.status === 'parcial').length ? `${(data.sources || []).filter(source => source.status === 'erro' || source.status === 'parcial').length} fonte(s) com aviso na última recolha.` : liveCount ? 'Recolha diária ativa; confirma sempre na loja.' : 'Nenhuma fonte autorizada ativa. Os preços apresentados são de exemplo.';
+  const warnings = (Array.isArray(data.sources) ? data.sources : []).filter(source => source?.status === 'erro' || source?.status === 'parcial').length;
+  if (sourceStatus) sourceStatus.textContent = warnings ? `${warnings} fonte(s) com aviso na última recolha.` : liveCount ? 'Recolha diária ativa; confirma sempre preço e stock na loja.' : counts.desatualizado ? 'Não há leituras recentes: os preços reais mostrados estão desatualizados.' : 'Nenhuma fonte autorizada ativa. Os preços apresentados são de exemplo.';
   renderFocusChart(); renderWatchList(); renderCatalog(); renderBuilder();
   if (document.getElementById('product').classList.contains('active')) renderProduct();
   return liveCount;
 }
+// Devolve o número de peças com preço atual, ou null se não houver snapshot utilizável.
+// O service worker marca com 'X-RigRadar-Offline' as respostas servidas da cache.
 async function loadPrices() {
-  try { const response = await fetch(staticHosting ? './prices.json' : './api/prices', { cache:'no-store' }); if (!response.ok) return null; return applyPriceData(await response.json()); } catch { return null; /* A PWA continua a funcionar offline. */ }
+  try {
+    const response = await fetch(staticHosting ? './prices.json' : './api/prices', { cache:'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return applyPriceData(await response.json(), { offline:response.headers.get('X-RigRadar-Offline') === '1' });
+  } catch (error) {
+    console.warn('Snapshot de preços indisponível:', error);
+    if (!snapshotInfo.generatedAt) document.getElementById('updatedLabel').textContent = 'Preços indisponíveis (sem ligação) · a mostrar dados de exemplo';
+    return null;
+  }
 }
 async function refreshPrices() {
   const elapsed = Date.now() - lastRefresh;
-  if (elapsed < 10 * 60 * 1000 && lastRefresh) { await loadPrices(); showToast(`A usar cache — próxima recolha em ${Math.ceil((10 * 60 * 1000 - elapsed) / 60000)} min.`); return; }
+  // O limite de 10 min protege as fontes quando o servidor local faz recolhas reais.
+  // No Pages o botão só relê o snapshot estático, por isso não há limite nem "próxima recolha".
+  if (!staticHosting && elapsed < 10 * 60 * 1000 && lastRefresh) { await loadPrices(); showToast(`A usar cache — próxima recolha em ${Math.ceil((10 * 60 * 1000 - elapsed) / 60000)} min.`); return; }
   const buttons = [...document.querySelectorAll('#refreshButton,#catalogRefresh')]; buttons.forEach(button => { button.classList.add('loading'); button.disabled = true; });
   try {
     if (staticHosting) {
-      const liveCount = await loadPrices(); if (liveCount == null) throw new Error('Snapshot indisponível.');
-      lastRefresh = Date.now(); localStorage.setItem('rigradar-last-live-refresh', String(lastRefresh));
-      showToast(liveCount ? `${liveCount} peças com leituras reais. O snapshot é atualizado diariamente.` : 'Snapshot atualizado; ainda não há fontes autorizadas configuradas.');
+      const liveCount = await loadPrices();
+      if (liveCount == null) { showToast('Não foi possível ler o snapshot de preços. Verifica a ligação.'); return; }
+      const when = snapshotInfo.generatedAt ? `gerado ${PS.ageText(snapshotInfo.generatedAt)}` : 'sem data';
+      if (snapshotInfo.offline) showToast(`Sem ligação: a mostrar a cópia guardada do snapshot (${when}).`);
+      else showToast(`Snapshot relido (${when}). A recolha corre uma vez por dia no servidor; este botão não inicia uma nova recolha.${liveCount ? '' : ' Ainda não há preços atuais.'}`);
       return;
     }
     const response = await fetch('./api/prices/refresh', { method:'POST' });
@@ -275,9 +324,9 @@ document.getElementById('recommendForm').addEventListener('submit', async event 
     if (!recommendation.best) { result.textContent = recommendation.cheapest ? `Não há build compatível dentro de ${formatPrice(budget)}. A combinação compatível mais barata custa ${formatPrice(recommendation.cheapest.total)}.` : 'O catálogo não contém uma combinação totalmente compatível.'; return; }
     Object.assign(selections, recommendation.best.choice); saveBuild(); renderBuilder();
     const gpu = selected('GPU'), cpu = selected('CPU');
-    const sampleCount = slots.filter(slot => selected(slot).priceSource !== 'live').length;
+    const sampleCount = slots.filter(slot => !PS.isBuyable(selected(slot)) && selected(slot).trackable !== false).length;
     const priorityNote = form.elements.priority.value === 'silencio' ? ' Sem medições de ruído, a escolha do cooler é apenas um indicador indireto.' : form.elements.priority.value === 'estetica' ? ' Sem dados de estética no catálogo, foi usada uma escolha equilibrada.' : '';
-    result.textContent = `Build compatível aplicada: ${formatPrice(recommendation.best.total)} de ${formatPrice(budget)}. ${cpu.name} e ${gpu.name} equilibram o perfil ${form.elements.use.selectedOptions[0].text.toLowerCase()} com prioridade em ${form.elements.priority.selectedOptions[0].text.toLowerCase()}.${priorityNote} ${sampleCount ? `${sampleCount} preços são de exemplo; confirma-os antes de comprar.` : 'Todos os preços têm leituras reais; confirma stock e total nas lojas.'}`;
+    result.textContent = `Build compatível aplicada: ${formatPrice(recommendation.best.total)} de ${formatPrice(budget)}. ${cpu.name} e ${gpu.name} equilibram o perfil ${form.elements.use.selectedOptions[0].text.toLowerCase()} com prioridade em ${form.elements.priority.selectedOptions[0].text.toLowerCase()}.${priorityNote} ${sampleCount ? `${sampleCount} preços não são ofertas atuais (exemplo ou desatualizados); confirma-os antes de comprar.` : 'Todos os preços são leituras reais e recentes; confirma stock e total nas lojas.'}`;
     showToast('Build recomendada aplicada ao PC Builder.');
   } catch (error) { console.error('Falha na recomendação:', error); result.textContent = 'Não foi possível calcular a recomendação neste momento.'; }
 });
