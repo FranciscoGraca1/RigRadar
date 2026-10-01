@@ -94,3 +94,65 @@ test('assistente usa a API apenas com chave no servidor e contexto válido', asy
   assert.equal(JSON.parse(request.options.body).store, false);
   await assert.rejects(askAssistant({ message:'Olá', context, fetchImpl, apiKey:'', model:'test-model' }), /não configurada/);
 });
+
+test('oferta antiga não é apresentada como preço atual (frescura)', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'rigradar-test-'));
+  const now = Date.parse('2026-10-01T12:00:00.000Z');
+  const service = createPriceService({ catalog:[{ id:'cpu7600' }], sources:[], dataDir, now:() => now });
+  try {
+    const db = new DatabaseSync(join(dataDir, 'prices.sqlite'));
+    const add = db.prepare('INSERT INTO price_history (component_id, source_id, store, price_cents, availability, url, collected_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    // Loja A deixou de aparecer no feed há 10 dias com um preço baixo; Loja B foi lida ontem.
+    add.run('cpu7600','feed','Loja A',10000,'Em stock','https://loja.example/a','2026-09-21T12:00:00.000Z');
+    add.run('cpu7600','feed','Loja B',20000,'Em stock','https://loja.example/b','2026-09-30T12:00:00.000Z');
+    db.close();
+    const [item] = service.current(90);
+    assert.equal(item.price, 200);
+    assert.equal(item.store, 'Loja B');
+    assert.deepEqual(item.stores.map(offer => offer.store), ['Loja B']);
+  } finally { service.close(); await rm(dataDir, { recursive:true, force:true }); }
+});
+
+test('estados de preço: sem stock, desatualizado e sem leituras não têm preço comprável', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'rigradar-test-'));
+  const now = Date.parse('2026-10-01T12:00:00.000Z');
+  const catalog = [{ id:'cpu7600' }, { id:'gpu4070' }, { id:'ram32' }];
+  const service = createPriceService({ catalog, sources:[], dataDir, now:() => now });
+  try {
+    const db = new DatabaseSync(join(dataDir, 'prices.sqlite'));
+    const add = db.prepare('INSERT INTO price_history (component_id, source_id, store, price_cents, availability, url, collected_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    add.run('cpu7600','feed','Loja A',15000,'Indisponível','https://loja.example/a','2026-10-01T06:00:00.000Z');
+    add.run('gpu4070','feed','Loja A',60000,'Em stock','https://loja.example/g','2026-09-25T06:00:00.000Z');
+    db.close();
+    const [cpu, gpu, ram] = service.current(90);
+    assert.equal(cpu.status, 'sem stock');
+    assert.equal(cpu.price, null);
+    assert.equal(cpu.lastSeen.availability, 'Indisponível');
+    assert.equal(cpu.stores.length, 1);
+    assert.equal(gpu.status, 'desatualizado');
+    assert.equal(gpu.price, null);
+    assert.deepEqual(gpu.stores, []);
+    assert.equal(gpu.lastSeen.price, 600);
+    assert.equal(gpu.history.length, 1, 'o histórico antigo continua disponível para gráficos');
+    assert.equal(gpu.low, 600, 'mínimo/média continuam a usar leituras em stock do período');
+    assert.equal(ram.status, 'sem leituras');
+    assert.equal(ram.lastSeen, null);
+    const snap = service.snapshot(90);
+    assert.equal(snap.maxOfferAgeHours, 48);
+    assert.equal(snap.generatedAt, '2026-10-01T12:00:00.000Z');
+  } finally { service.close(); await rm(dataDir, { recursive:true, force:true }); }
+});
+
+test('oferta exatamente no limite de 48 h ainda é atual; um minuto depois já não', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'rigradar-test-'));
+  let now = Date.parse('2026-10-03T06:00:00.000Z');
+  const service = createPriceService({ catalog:[{ id:'cpu7600' }], sources:[], dataDir, now:() => now });
+  try {
+    const db = new DatabaseSync(join(dataDir, 'prices.sqlite'));
+    db.prepare('INSERT INTO price_history (component_id, source_id, store, price_cents, availability, url, collected_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run('cpu7600','feed','Loja A',19000,'Em stock','https://loja.example/a','2026-10-01T06:00:00.000Z');
+    db.close();
+    assert.equal(service.current()[0].status, 'atual');
+    now += 60_000;
+    assert.equal(service.current()[0].status, 'desatualizado');
+  } finally { service.close(); await rm(dataDir, { recursive:true, force:true }); }
+});
