@@ -37,8 +37,10 @@
     let state = STATES.includes(update.status) ? update.status : hasCurrent ? 'atual' : 'sem leituras';
     if (state === 'atual' && (!hasCurrent || !AVAILABLE.includes(update.availability))) state = lastSeen || hasCurrent ? 'desatualizado' : 'sem leituras';
     const reference = state === 'atual' ? { price:update.price, store:update.store, availability:update.availability, observedAt:update.observedAt } : lastSeen || (hasCurrent ? { price:update.price, store:update.store, availability:update.availability, observedAt:update.observedAt } : null);
-    if (state === 'atual' && now - Date.parse(reference.observedAt) > maxAgeMs) state = 'desatualizado';
     if (state === 'sem stock' && !reference) state = 'sem leituras';
+    // 'atual' e 'sem stock' descrevem leituras recentes: ambos expiram com a idade, também
+    // num separador que ficou aberto (app.js volta a chamar esta função periodicamente).
+    if ((state === 'atual' || state === 'sem stock') && now - Date.parse(reference.observedAt) > maxAgeMs) state = 'desatualizado';
     if (state === 'desatualizado' && !reference) state = 'sem leituras';
     return {
       id:update.id, state, reference,
