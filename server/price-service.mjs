@@ -5,6 +5,13 @@ import { DatabaseSync } from 'node:sqlite';
 const VALID_AVAILABILITY = new Set(['Em stock', 'Limitado', 'Indisponível', 'Pré-encomenda', 'Desconhecido']);
 const MAX_FEED_BYTES = 2_000_000;
 const MAX_PAGE_BYTES = 500_000;
+const AVAILABLE = new Set(['Em stock', 'Limitado']);
+// Política de frescura: uma oferta só conta como preço atual se tiver sido lida há
+// menos de OFFER_MAX_AGE_HOURS. A recolha é diária, mas o GitHub Actions pode atrasar
+// várias horas; 48 h toleram um atraso grande ou uma execução falhada, sem deixar uma
+// oferta que saiu do feed continuar a parecer comprável. As leituras antigas ficam no
+// histórico (gráficos e mínimo/média) mas nunca alimentam `price`/`stores`.
+export const OFFER_MAX_AGE_HOURS = 48;
 
 function assertHttpsHost(value, host) {
   const url = new URL(value);
@@ -27,12 +34,12 @@ async function readLimited(response, maxBytes) {
   return Buffer.concat(chunks, total).toString('utf8');
 }
 
-function normalizeOffer(raw, source, catalogIds) {
+function normalizeOffer(raw, source, catalogIds, observedAt = new Date().toISOString()) {
   if (!raw || !catalogIds.has(raw.sku) || typeof raw.store !== 'string' || !raw.store.trim()) throw new Error('SKU ou loja inválidos.');
   if (!Number.isFinite(raw.price) || raw.price <= 0 || raw.price > 100_000) throw new Error('Preço inválido.');
   const url = assertHttpsHost(raw.url, source.type === 'product-jsonld' ? source.host : new URL(raw.url).hostname);
   const availability = VALID_AVAILABILITY.has(raw.availability) ? raw.availability : 'Desconhecido';
-  return { sku: raw.sku, store: raw.store.trim().slice(0, 80), priceCents: Math.round(raw.price * 100), url: url.href, availability, observedAt: new Date().toISOString(), source: source.id };
+  return { sku: raw.sku, store: raw.store.trim().slice(0, 80), priceCents: Math.round(raw.price * 100), url: url.href, availability, observedAt, source: source.id };
 }
 
 function robotsAllowed(robotsText, path, userAgent = 'RigRadar') {
@@ -80,7 +87,7 @@ function parseProductJsonLd(html) {
   throw new Error('Preço de produto não encontrado no JSON-LD.');
 }
 
-export function createPriceService({ catalog, sources, dataDir, fetchImpl = fetch, now = () => Date.now(), contact = process.env.RIGRADAR_CONTACT || 'https://github.com/FranciscoGraca1/RigRadar/issues' }) {
+export function createPriceService({ catalog, sources, dataDir, fetchImpl = fetch, now = () => Date.now(), maxOfferAgeHours = OFFER_MAX_AGE_HOURS, contact = process.env.RIGRADAR_CONTACT || 'https://github.com/FranciscoGraca1/RigRadar/issues' }) {
   const ids = new Set(catalog.map(item => item.id));
   mkdirSync(dataDir, { recursive:true });
   const db = new DatabaseSync(join(dataDir, 'prices.sqlite'));
@@ -103,9 +110,16 @@ export function createPriceService({ catalog, sources, dataDir, fetchImpl = fetc
   async function load() { /* A base de dados é aberta e validada no construtor. */ }
 
   function status() { return [...states.values()]; }
+  // Estado por SKU (o frontend mostra-o sem reinterpretar):
+  // 'atual' — há oferta fresca em stock/limitado; `price` é a mais barata dessas.
+  // 'sem stock' — há ofertas frescas, mas nenhuma comprável; `price` fica null.
+  // 'desatualizado' — só existem leituras mais antigas do que maxOfferAgeHours.
+  // 'sem leituras' — nunca houve leitura real deste SKU.
+  // `lastSeen` descreve sempre a leitura mais recente (para contexto, não para comprar).
   function current(periodDays = 90) {
     const cutoff = new Date(now() - Math.max(1, Number(periodDays) || 90) * 86_400_000).toISOString();
     const yearCutoff = new Date(now() - 365 * 86_400_000).toISOString();
+    const freshCutoff = new Date(now() - maxOfferAgeHours * 3_600_000).toISOString();
     const grouped = new Map();
     const historyBySku = new Map();
     for (const offer of rows.all()) {
@@ -120,12 +134,22 @@ export function createPriceService({ catalog, sources, dataDir, fetchImpl = fetc
       }
     }
     return catalog.map(item => {
-      const latest = [...(grouped.get(item.id)?.values() || [])].sort((a,b) => a.priceCents - b.priceCents);
-      const available = latest.filter(offer => offer.availability === 'Em stock' || offer.availability === 'Limitado');
-      const best = available[0] || latest[0];
+      const latestPerStore = [...(grouped.get(item.id)?.values() || [])];
+      const fresh = latestPerStore.filter(offer => offer.observedAt >= freshCutoff).sort((a,b) => a.priceCents - b.priceCents);
+      const best = fresh.find(offer => AVAILABLE.has(offer.availability));
+      const newest = latestPerStore.reduce((acc, offer) => !acc || offer.observedAt > acc.observedAt ? offer : acc, null);
+      const status = best ? 'atual' : fresh.length ? 'sem stock' : newest ? 'desatualizado' : 'sem leituras';
       const history = historyBySku.get(item.id) || [];
       const stats = summary.get(item.id, cutoff);
-      return { id:item.id, price:best ? best.priceCents / 100 : null, store:best?.store ?? null, availability:best?.availability ?? null, low:stats.count ? stats.low / 100 : null, avg:stats.count ? Math.round(stats.avg) / 100 : null, sampleCount:stats.count, statsPeriodDays:periodDays, stores:latest.map(offer => ({ store:offer.store, price:offer.priceCents / 100, availability:offer.availability, url:offer.url, observedAt:offer.observedAt })), history, observedAt:best?.observedAt ?? null };
+      return {
+        id:item.id, status,
+        price:best ? best.priceCents / 100 : null, store:best?.store ?? null, availability:best?.availability ?? null,
+        observedAt:best?.observedAt ?? null,
+        lastSeen:newest ? { price:newest.priceCents / 100, store:newest.store, availability:newest.availability, observedAt:newest.observedAt } : null,
+        low:stats.count ? stats.low / 100 : null, avg:stats.count ? Math.round(stats.avg) / 100 : null, sampleCount:stats.count, statsPeriodDays:periodDays,
+        stores:fresh.map(offer => ({ store:offer.store, price:offer.priceCents / 100, availability:offer.availability, url:offer.url, observedAt:offer.observedAt })),
+        history
+      };
     });
   }
 
@@ -142,7 +166,8 @@ export function createPriceService({ catalog, sources, dataDir, fetchImpl = fetc
     const text = await fetchText(source.url, MAX_FEED_BYTES, token ? { Authorization:`Bearer ${token}` } : {});
     const feed = JSON.parse(text);
     if (!Array.isArray(feed)) throw new Error('O feed precisa de ser uma lista de ofertas.');
-    return feed.map(item => normalizeOffer(item, source, ids));
+    const observedAt = new Date(now()).toISOString();
+    return feed.map(item => normalizeOffer(item, source, ids, observedAt));
   }
 
   async function fromProducts(source) {
@@ -158,7 +183,7 @@ export function createPriceService({ catalog, sources, dataDir, fetchImpl = fetc
         if (!robotsAllowed(robots, url.pathname + url.search)) throw new Error('Bloqueado por robots.txt.');
         const html = await fetchText(url.href, MAX_PAGE_BYTES);
         const details = parseProductJsonLd(html);
-        offers.push(normalizeOffer({ sku, store:source.name, price:details.price, url:url.href, availability:details.availability }, source, ids));
+        offers.push(normalizeOffer({ sku, store:source.name, price:details.price, url:url.href, availability:details.availability }, source, ids, new Date(now()).toISOString()));
       } catch (error) { states.get(source.id).error = `${states.get(source.id).error ? states.get(source.id).error + ' ' : ''}${sku}: ${error.message}`.slice(0, 300); }
     }
     return offers;
@@ -191,7 +216,11 @@ export function createPriceService({ catalog, sources, dataDir, fetchImpl = fetc
   }
 
   async function refresh() { return Promise.all(sources.map(refreshOne)); }
-  return { load, current, status, refresh, refreshOne, close:() => db.close() };
+  // Formato único partilhado por dist/prices.json (Actions) e pela API local.
+  function snapshot(periodDays = 90) {
+    return { generatedAt:new Date(now()).toISOString(), statsPeriodDays:periodDays, maxOfferAgeHours, components:current(periodDays), sources:status() };
+  }
+  return { load, current, snapshot, status, refresh, refreshOne, maxOfferAgeHours, close:() => db.close() };
 }
 
 export const internals = { robotsAllowed, parseProductJsonLd, normalizeOffer };

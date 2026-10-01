@@ -16,7 +16,7 @@ if (!Array.isArray(config.sources)) throw new Error('Configuração de fontes in
 const service = createPriceService({ catalog, sources:config.sources, dataDir:join(root, 'data') });
 try {
   await service.refresh();
-  const result = { generatedAt:new Date().toISOString(), statsPeriodDays:90, components:service.current(90), sources:service.status() };
+  const result = service.snapshot(90);
   await writeFile(join(root, 'dist', 'prices.json'), JSON.stringify(result, null, 2) + '\n', 'utf8');
-  process.stdout.write(`Snapshot: ${result.components.filter(item => item.price != null).length} peças com leituras reais; ${result.sources.filter(item => item.status === 'erro').length} fontes com erro.\n`);
+  process.stdout.write(`Snapshot: ${result.components.filter(item => item.status === 'atual').length} peças com preço atual, ${result.components.filter(item => item.status === 'desatualizado').length} desatualizadas; ${result.sources.filter(item => item.status === 'erro').length} fontes com erro.\n`);
 } finally { service.close(); }

@@ -56,8 +56,8 @@ export function startServer() {
       if (!requestHost || ![`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`].includes(requestHost)) { json(res, 403, { error:'Origem não autorizada.' }); return; }
       if (req.method === 'POST' && req.headers.origin && req.headers.origin !== `http://${requestHost}`) { json(res, 403, { error:'Origem não autorizada.' }); return; }
       const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-      if (url.pathname === '/api/prices' && req.method === 'GET') { json(res, 200, { components:prices.current(), sources:prices.status() }); return; }
-      if (url.pathname === '/api/prices/refresh' && req.method === 'POST') { await prices.refresh(); json(res, 200, { components:prices.current(), sources:prices.status() }); return; }
+      if (url.pathname === '/api/prices' && req.method === 'GET') { json(res, 200, prices.snapshot(90)); return; }
+      if (url.pathname === '/api/prices/refresh' && req.method === 'POST') { await prices.refresh(); json(res, 200, prices.snapshot(90)); return; }
       if (url.pathname === '/api/assistant' && req.method === 'POST') {
         const body = await readJsonBody(req);
         try { const answer = await askAssistant({ message:body.message, context:body.context }); json(res, 200, { answer }); }
