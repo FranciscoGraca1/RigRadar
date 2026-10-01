@@ -8,45 +8,80 @@ on:
     - cron: '17 5 * * *'
 
 permissions:
-  contents: write
-  pages: write
-  id-token: write
-
-concurrency:
-  group: github-pages
-  cancel-in-progress: false
+  contents: read
 
 jobs:
-  deploy:
+  # Recolha diária (schedule/manual). Tem um grupo de concorrência próprio: no GitHub, um
+  # novo run pendente cancela o pendente anterior do mesmo grupo, por isso partilhar o grupo
+  # do deploy deixava um push humano cancelar a recolha do dia.
+  collect:
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: rigradar-collect
+      cancel-in-progress: false
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Testar backend e lógica do frontend
+      - name: Testar backend, lógica do frontend e workflow
         run: node --test "server/*.test.mjs" "test/*.test.mjs"
       - name: Recolher preços autorizados e gerar snapshot
-        if: github.event_name != 'push'
         env:
           RIGRADAR_SOURCES_JSON: ${{ secrets.RIGRADAR_SOURCES_JSON }}
           RIGRADAR_CONTACT: ${{ vars.RIGRADAR_CONTACT }}
           KUANTOKUSTA_FEED_TOKEN: ${{ secrets.KUANTOKUSTA_FEED_TOKEN }}
           IDEALO_FEED_TOKEN: ${{ secrets.IDEALO_FEED_TOKEN }}
         run: node server/collect-prices.mjs
-      - name: Guardar histórico e snapshot
-        if: github.event_name != 'push'
+      # Guarda sempre os ficheiros desta recolha: se o push falhar, as leituras do dia
+      # continuam recuperáveis a partir do artefacto (o runner é descartado no fim).
+      - name: Guardar cópia da recolha como artefacto
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recolha-${{ github.run_id }}
+          path: |
+            data/prices.sqlite
+            dist/prices.json
+          retention-days: 30
+          if-no-files-found: warn
+      - name: Gravar histórico e snapshot em main
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add dist/prices.json data/prices.sqlite
-          if ! git diff --cached --quiet; then
-            git commit -m "Atualizar histórico de preços"
-            git push origin HEAD:main
-          fi
+          bash .github/scripts/commit-snapshot.sh
+
+  # Deploy no Pages. Faz checkout do main mais recente (não do commit que disparou o run),
+  # para incluir o commit de dados do bot; pushes feitos com GITHUB_TOKEN não disparam
+  # novos runs. Os deploys são serializados; cada um publica o main do seu momento.
+  deploy:
+    needs: collect
+    if: ${{ !cancelled() && (needs.collect.result == 'success' || needs.collect.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Testar backend, lógica do frontend e workflow
+        run: node --test "server/*.test.mjs" "test/*.test.mjs"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
