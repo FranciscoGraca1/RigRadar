@@ -15,9 +15,9 @@ Para testar sem alterar a SQLite versionada, corre o coletor numa cópia do repo
 ## Arquitetura (não mudar sem decisão explícita)
 
 - `dist/` é publicado tal como está no GitHub Pages: sem framework, sem build step, sem dependências npm. Scripts clássicos carregados por ordem em `index.html`: `price-state.js` → `recommend.js` → `app.js`.
-- A lógica pura vive em módulos pequenos (`dist/price-state.js`, `dist/recommend.js`) que funcionam no browser e em Node via `require`, para poderem ser testados em `test/`.
-- `dist/catalog.json` é a fonte única de SKUs. As regras de compatibilidade são determinísticas (`getCompatibility` em `app.js`); a IA nunca as substitui.
-- O GitHub Actions (`.github/workflows/deploy-pages.yml`) recolhe uma vez por dia, faz commit de `data/prices.sqlite` + `dist/prices.json` e publica. Num push só testa e publica.
+- A lógica pura vive em módulos pequenos (`dist/price-state.js`, `dist/compatibility.js`, `dist/recommend.js`) que funcionam no browser e em Node via `require`, para poderem ser testados em `test/`. O service worker é testado em sandbox (`test/sw.test.mjs`).
+- `dist/catalog.json` é a fonte única de SKUs. As regras de compatibilidade são determinísticas (`dist/compatibility.js`); a IA nunca as substitui. Uma peça nova tem de ter os campos verificados em `test/compatibility.test.mjs`.
+- O GitHub Actions (`.github/workflows/deploy-pages.yml`) tem os jobs `collect` (diário: recolhe e grava os dados em `main` com `.github/scripts/commit-snapshot.sh`, com rebase e nova tentativa) e `deploy` (publica o `main` mais recente). Os ficheiros de dados (`data/prices.sqlite`, `dist/prices.json`) só são escritos pelo workflow.
 - O backend (`server/`) usa apenas módulos nativos do Node (`node:sqlite`).
 
 ## Dados de preços — regras invioláveis
@@ -32,7 +32,7 @@ Para testar sem alterar a SQLite versionada, corre o coletor numa cópia do repo
 - Manter os tokens de cor e tipografia de `dist/styles.css`; estilos novos vão para `dist/enhancements.css` e usam esses tokens.
 - Comentar cache, frescura, compatibilidade e segurança; não comentar o óbvio.
 - Mensagens de commit em português, curtas e no imperativo («Validar…», «Corrigir…»).
-- Mudanças no service worker: atualizar `ASSETS` quando se adiciona um ficheiro a `dist/`, e mudar `CACHE` só se a lista ou a estratégia mudarem.
+- Ficheiro novo em `dist/`: acrescentá-lo a `ASSETS` em `sw.js` e mudar `CACHE`; mudar `CACHE` também quando a estratégia do SW muda.
 
 ## Publicação
 
