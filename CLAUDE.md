@@ -5,7 +5,7 @@ PWA em JavaScript vanilla para acompanhar preços de componentes de PC e validar
 ## Comandos
 
 ```sh
-node --test server/server.test.mjs test/price-state.test.mjs   # testes (Node 24; o CI corre exatamente isto)
+node --test "server/*.test.mjs" "test/*.test.mjs"   # testes (Node 24; o CI corre exatamente isto)
 node server/server.mjs                                          # servidor local em http://127.0.0.1:4173/
 node server/collect-prices.mjs                                  # recolha + snapshot (altera data/prices.sqlite e dist/prices.json)
 ```
