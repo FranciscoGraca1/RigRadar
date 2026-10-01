@@ -1,0 +1,29 @@
+name: Validar PR
+
+# Validação de pull requests: só testes e verificação de sintaxe.
+# Não recolhe preços, não faz commits, não usa secrets e não publica no Pages.
+# Sem filtro de branch de destino: corre também em PRs empilhados (PR cujo destino é
+# outro branch de trabalho), além dos PRs para main.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verificar sintaxe do frontend e do backend
+        run: for file in dist/*.js server/*.mjs; do node --check "$file"; done
+      - name: Testes
+        run: node --test "server/*.test.mjs" "test/*.test.mjs"

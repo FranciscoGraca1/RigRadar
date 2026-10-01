@@ -10,13 +10,13 @@ PWA em JavaScript vanilla para acompanhar preços de componentes, comparar valor
 node .\server\server.mjs
 ```
 
-Abre `http://127.0.0.1:4173/`. O servidor está limitado ao computador local. A PWA e os dados de demonstração também funcionam offline depois da primeira visita. Localmente, o servidor recolhe preços a pedido e responde ao assistente com IA; no GitHub Pages, os preços reais chegam pelo snapshot estático `dist/prices.json` gerado diariamente (ver [Publicação no GitHub Pages](#publicação-no-github-pages)) e o assistente usa apenas a resposta local. Executa os testes com `node --test server/server.test.mjs test/price-state.test.mjs` (o mesmo comando corre no GitHub Actions).
+Abre `http://127.0.0.1:4173/`. O servidor está limitado ao computador local. A PWA e os dados de demonstração também funcionam offline depois da primeira visita. Localmente, o servidor recolhe preços a pedido e responde ao assistente com IA; no GitHub Pages, os preços reais chegam pelo snapshot estático `dist/prices.json` gerado diariamente (ver [Publicação no GitHub Pages](#publicação-no-github-pages)) e o assistente usa apenas a resposta local. Executa os testes com `node --test "server/*.test.mjs" "test/*.test.mjs"` (o mesmo comando corre no GitHub Actions).
 
 ## Dados e compatibilidade
 
 `dist/catalog.json` é a fonte única de SKUs: as opções do builder são derivadas da categoria de cada entrada. Fonte, Caixa e Cooler estão no catálogo e podem ser seguidos, tal como CPU, GPU, RAM, motherboard e armazenamento. O cooler AMD incluído é uma exceção: não é vendido como SKU autónomo, por isso tem `trackable:false` e não aparece no catálogo. Os novos SKUs não têm histórico inventado; o gráfico surge quando houver pelo menos duas leituras. Os valores já existentes no protótipo são exemplos e são rotulados como tal até serem substituídos por recolhas autorizadas.
 
-O questionário de 4 perguntas recomenda uma build compatível dentro do orçamento e aplica-a diretamente aos slots. Usa preço, índice de valor e rácios por utilização; se um SKU não tiver `score`, usa uma estimativa neutra. “Compacto” usa formato de caixa/motherboard; “upgrade” usa slots M.2 e potência da fonte; “silêncio” é uma aproximação pelo cooler. Não existem métricas fiáveis de ruído ou estética. Se o orçamento não chega, a seleção anterior mantém-se. Os preços-alvo são guardados localmente no navegador, e o alerta visual só dispara para preços reais com stock. Não há notificações push/email nem sincronização entre dispositivos.
+O questionário de 4 perguntas recomenda uma build compatível dentro do orçamento e aplica-a diretamente aos slots. Usa preço, índice de valor e rácios por utilização; se um SKU não tiver `score`, usa uma estimativa neutra. “Compacto” usa formato de caixa/motherboard; “upgrade” usa slots M.2 e potência da fonte; “silêncio” é uma aproximação pelo cooler. Não existem métricas fiáveis de ruído ou estética. Se o orçamento não chega, a seleção anterior mantém-se. Peças com leitura real só entram na recomendação quando o preço é atual e com stock; uma peça com leitura real desatualizada ou sem stock é excluída. Peças sem qualquer leitura real entram com o preço de exemplo do catálogo, para que haja sempre uma build de demonstração; o resultado diz quantos preços são reais, quantos são de exemplo e que peças foram excluídas. Os preços-alvo são guardados localmente no navegador, e o alerta visual só dispara para preços reais com stock. Não há notificações push/email nem sincronização entre dispositivos.
 
 O builder verifica socket CPU/motherboard, suporte DDR, módulos de RAM vs. slots DIMM, socket e altura do cooler, formato da caixa, potência e **tipo/quantidade** dos conectores da fonte, comprimento da GPU, slots M.2, portas SATA e rácio de desempenho CPU/GPU. A análise da IA não substitui estas regras determinísticas.
 
@@ -35,16 +35,16 @@ Define `enabled:true` e `authorized:true` só depois de confirmar as condições
 
 Uma leitura real só é apresentada como preço atual se tiver menos de **48 horas** (`OFFER_MAX_AGE_HOURS` em `server/price-service.mjs`) e estiver «Em stock» ou «Limitado». A recolha é diária e o Actions pode atrasar várias horas; 48 h toleram um atraso grande ou uma execução falhada, mas uma oferta que deixou de aparecer no feed deixa de parecer comprável. Cada preço mostra um rótulo:
 
-- **Preço real** — leitura recente e com stock; é o único estado que dispara o alerta de preço-alvo e que a recomendação pode usar.
+- **Preço real** — leitura recente e com stock; é o único estado que dispara o alerta de preço-alvo.
 - **Sem stock** — há leituras recentes, mas nenhuma comprável; mostra-se o último valor lido apenas como contexto.
 - **Preço desatualizado** — só há leituras com mais de 48 h; não há ofertas listadas.
 - **Preço de exemplo** — valor demonstrativo do catálogo; não houve leitura real.
 
-As leituras antigas continuam no histórico (gráficos, mínimo e média) e nunca são apagadas. O browser volta a verificar a idade com o seu relógio, por isso uma cópia offline antiga é rotulada como desatualizada. O painel mostra também a data e a idade do snapshot e se veio da cache offline. O formato do snapshot está descrito no [modelo de dados](DATA_MODEL.md#formato-de-distpricesjson-implementado).
+As leituras antigas continuam no histórico (gráficos, mínimo e média) e nunca são apagadas. O browser volta a verificar a idade com o seu relógio, por isso uma cópia offline antiga é rotulada como desatualizada. O painel mostra também a data e a idade do snapshot e se veio da cópia guardada. Com o separador aberto, os estados são reavaliados a cada minuto e quando o separador volta a ficar visível: uma oferta que passa das 48 h deixa de contar como atual sem recarregar a página. O formato do snapshot está descrito no [modelo de dados](DATA_MODEL.md#formato-de-distpricesjson-implementado).
 
 ## Cache e atualização da PWA
 
-`dist/sw.js` usa **rede primeiro** para todos os ficheiros do site: cada pedido revalida com o servidor (`cache: 'no-cache'`, normalmente uma resposta 304) e atualiza a cópia local. Um deploy novo chega na visita seguinte sem mudar versões à mão. Sem rede, ou se a rede não responder em 4 s, usa-se a cópia guardada; um `prices.json` vindo da cache é assinalado como «cópia offline». Só é preciso mudar `CACHE` em `sw.js` quando a lista de ficheiros ou a estratégia mudam.
+`dist/sw.js` usa **rede primeiro** para todos os ficheiros do site: cada pedido revalida com o servidor (`cache: 'no-cache'`, normalmente uma resposta 304) e atualiza a cópia local. Um deploy novo chega na visita seguinte sem mudar versões à mão. Sem rede, ou se a rede não responder em 4 s, usa-se a cópia guardada; um `prices.json` vindo da cache é assinalado como «cópia guardada». Uma resposta de rede que chegue depois do limite continua a ser gravada para a visita seguinte (`event.waitUntil`); isto está coberto por `test/sw.test.mjs`. Só é preciso mudar `CACHE` em `sw.js` quando a lista de ficheiros ou a estratégia mudam.
 
 ## Assistente com IA
 

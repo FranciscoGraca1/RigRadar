@@ -15,6 +15,9 @@ let followed = new Set(PS.readStored(localStorage, 'rigradar-followed', ['gpu407
 let targets = Object.fromEntries(Object.entries(PS.readStored(localStorage, 'rigradar-targets', {}, PS.isPlainObject)).filter(([, value]) => Number.isFinite(value) && value > 0));
 // Metadados do último snapshot aplicado (idade e se veio da cache offline do service worker).
 let snapshotInfo = { generatedAt:null, offline:false, maxOfferAgeHours:PS.DEFAULT_MAX_OFFER_AGE_HOURS };
+// Último snapshot aplicado e assinatura dos estados calculados. Os estados dependem da
+// hora atual: refreshFreshness() volta a calculá-los sem novo pedido de rede.
+let lastSnapshot = null, appliedSignature = '', lastCounts = null, lastNewestReading = null;
 let activeProduct = 'gpu4070';
 let activeFilter = 'all';
 let chartPeriod = 30;
@@ -244,18 +247,37 @@ function applyPriceData(data, { offline = false } = {}) {
     counts[state.state]++;
   }
   const liveCount = counts.atual;
+  lastSnapshot = { data, offline }; appliedSignature = stateSignature(data, maxOfferAgeHours);
+  lastCounts = counts; lastNewestReading = newestReading;
   renderDashboardPrices(liveCount);
-  const snapshotText = snapshotInfo.generatedAt ? `snapshot de ${new Date(snapshotInfo.generatedAt).toLocaleString('pt-PT')} (${PS.ageText(snapshotInfo.generatedAt)})` : 'snapshot sem data';
-  const offlineText = offline ? ' · cópia offline' : '';
-  document.getElementById('updatedLabel').textContent = newestReading ? `Última leitura real · ${new Date(newestReading).toLocaleString('pt-PT')} · ${snapshotText}${offlineText}` : `Dados de exemplo · sem leituras reais · ${snapshotText}${offlineText}`;
-  const staleText = counts.desatualizado ? `, ${counts.desatualizado} desatualizada${counts.desatualizado > 1 ? 's' : ''}` : '';
-  document.querySelector('.sync-state span').textContent = liveCount || counts.desatualizado || counts['sem stock'] ? `${liveCount} peça${liveCount === 1 ? '' : 's'} com preço atual${staleText}` : 'Fontes por configurar';
+  renderSnapshotLabel();
   const sourceStatus = document.getElementById('sourceStatus');
   const warnings = (Array.isArray(data.sources) ? data.sources : []).filter(source => source?.status === 'erro' || source?.status === 'parcial').length;
   if (sourceStatus) sourceStatus.textContent = warnings ? `${warnings} fonte(s) com aviso na última recolha.` : liveCount ? 'Recolha diária ativa; confirma sempre preço e stock na loja.' : counts.desatualizado ? 'Não há leituras recentes: os preços reais mostrados estão desatualizados.' : 'Nenhuma fonte autorizada ativa. Os preços apresentados são de exemplo.';
   renderFocusChart(); renderWatchList(); renderCatalog(); renderBuilder();
   if (document.getElementById('product').classList.contains('active')) renderProduct();
   return liveCount;
+}
+function stateSignature(data, maxOfferAgeHours) {
+  return (Array.isArray(data.components) ? data.components : []).map(update => `${update?.id}:${PS.priceStateOf(update, { maxOfferAgeHours })?.state}`).join('|');
+}
+// Rótulos de idade (snapshot e contadores) que mudam com o tempo mesmo sem mudar estados.
+function renderSnapshotLabel() {
+  if (!lastSnapshot) return;
+  const counts = lastCounts, liveCount = counts.atual, newestReading = lastNewestReading, offline = snapshotInfo.offline;
+  const snapshotText = snapshotInfo.generatedAt ? `snapshot de ${new Date(snapshotInfo.generatedAt).toLocaleString('pt-PT')} (${PS.ageText(snapshotInfo.generatedAt)})` : 'snapshot sem data';
+  const offlineText = offline ? ' · cópia guardada (sem resposta da rede)' : '';
+  document.getElementById('updatedLabel').textContent = newestReading ? `Última leitura real · ${new Date(newestReading).toLocaleString('pt-PT')} · ${snapshotText}${offlineText}` : `Dados de exemplo · sem leituras reais · ${snapshotText}${offlineText}`;
+  const staleText = counts.desatualizado ? `, ${counts.desatualizado} desatualizada${counts.desatualizado > 1 ? 's' : ''}` : '';
+  document.querySelector('.sync-state span').textContent = liveCount || counts.desatualizado || counts['sem stock'] ? `${liveCount} peça${liveCount === 1 ? '' : 's'} com preço atual${staleText}` : 'Fontes por configurar';
+}
+// Um separador pode ficar aberto horas ou dias: uma oferta que passa de maxOfferAgeHours
+// tem de deixar de contar como atual (rótulos, alerta de preço-alvo, recomendação) sem
+// reload. Só re-renderiza tudo quando algum estado muda; caso contrário atualiza a idade.
+function refreshFreshness() {
+  if (!lastSnapshot) return false;
+  if (stateSignature(lastSnapshot.data, snapshotInfo.maxOfferAgeHours) !== appliedSignature) { applyPriceData(lastSnapshot.data, { offline:lastSnapshot.offline }); return true; }
+  renderSnapshotLabel(); return false;
 }
 // Devolve o número de peças com preço atual, ou null se não houver snapshot utilizável.
 // O service worker marca com 'X-RigRadar-Offline' as respostas servidas da cache.
@@ -281,7 +303,7 @@ async function refreshPrices() {
       const liveCount = await loadPrices();
       if (liveCount == null) { showToast('Não foi possível ler o snapshot de preços. Verifica a ligação.'); return; }
       const when = snapshotInfo.generatedAt ? `gerado ${PS.ageText(snapshotInfo.generatedAt)}` : 'sem data';
-      if (snapshotInfo.offline) showToast(`Sem ligação: a mostrar a cópia guardada do snapshot (${when}).`);
+      if (snapshotInfo.offline) showToast(`Sem resposta da rede: a mostrar a cópia guardada do snapshot (${when}).`);
       else showToast(`Snapshot relido (${when}). A recolha corre uma vez por dia no servidor; este botão não inicia uma nova recolha.${liveCount ? '' : ' Ainda não há preços atuais.'}`);
       return;
     }
@@ -319,14 +341,20 @@ document.getElementById('recommendForm').addEventListener('submit', async event 
   const budget = Number(form.elements.budget.value);
   const result = document.getElementById('recommendResult');
   if (!Number.isFinite(budget) || budget < 500) { result.textContent = 'Indica um orçamento válido de pelo menos 500 €.'; return; }
+  refreshFreshness(); // garante que nenhuma oferta expirada entra no cálculo
   try {
     const recommendation = recommendBuild({ options:buildOptions, budget, use:form.elements.use.value, resolution:form.elements.resolution.value, priority:form.elements.priority.value, evaluate:getCompatibility });
     if (!recommendation.best) { result.textContent = recommendation.cheapest ? `Não há build compatível dentro de ${formatPrice(budget)}. A combinação compatível mais barata custa ${formatPrice(recommendation.cheapest.total)}.` : 'O catálogo não contém uma combinação totalmente compatível.'; return; }
     Object.assign(selections, recommendation.best.choice); saveBuild(); renderBuilder();
     const gpu = selected('GPU'), cpu = selected('CPU');
-    const sampleCount = slots.filter(slot => !PS.isBuyable(selected(slot)) && selected(slot).trackable !== false).length;
+    // Distinção explícita: preços reais atuais, preços de exemplo (usados para a build de
+    // demonstração) e peças com leitura real excluídas por estarem desatualizadas ou sem stock.
+    const chosen = slots.map(slot => selected(slot)).filter(item => item.trackable !== false);
+    const liveChosen = chosen.filter(item => PS.isBuyable(item)).length;
+    const sampleChosen = chosen.filter(item => item.priceSource !== 'live').length;
+    const excluded = slots.flatMap(slot => buildOptions[slot]).filter(item => item.priceSource === 'live' && !PS.isBuyable(item));
     const priorityNote = form.elements.priority.value === 'silencio' ? ' Sem medições de ruído, a escolha do cooler é apenas um indicador indireto.' : form.elements.priority.value === 'estetica' ? ' Sem dados de estética no catálogo, foi usada uma escolha equilibrada.' : '';
-    result.textContent = `Build compatível aplicada: ${formatPrice(recommendation.best.total)} de ${formatPrice(budget)}. ${cpu.name} e ${gpu.name} equilibram o perfil ${form.elements.use.selectedOptions[0].text.toLowerCase()} com prioridade em ${form.elements.priority.selectedOptions[0].text.toLowerCase()}.${priorityNote} ${sampleCount ? `${sampleCount} preços não são ofertas atuais (exemplo ou desatualizados); confirma-os antes de comprar.` : 'Todos os preços são leituras reais e recentes; confirma stock e total nas lojas.'}`;
+    result.textContent = `Build compatível aplicada: ${formatPrice(recommendation.best.total)} de ${formatPrice(budget)}. ${cpu.name} e ${gpu.name} equilibram o perfil ${form.elements.use.selectedOptions[0].text.toLowerCase()} com prioridade em ${form.elements.priority.selectedOptions[0].text.toLowerCase()}.${priorityNote} Preços: ${liveChosen} ${liveChosen === 1 ? 'leitura real atual' : 'leituras reais atuais'}${sampleChosen ? `, ${sampleChosen} de exemplo (build de demonstração; confirma antes de comprar)` : ''}.${excluded.length ? ` Excluídas por leitura real desatualizada ou sem stock: ${excluded.map(item => item.short).join(', ')}.` : ''} Confirma stock e total nas lojas.`;
     showToast('Build recomendada aplicada ao PC Builder.');
   } catch (error) { console.error('Falha na recomendação:', error); result.textContent = 'Não foi possível calcular a recomendação neste momento.'; }
 });
@@ -351,4 +379,6 @@ function registerWebMCP() {
 }
 if (staticHosting) { document.querySelector('.sidebar-footer p').textContent = 'Preços: snapshot diário. IA: análise local até existir proxy seguro.'; }
 renderFocusChart(); renderWatchList(); renderCatalog(); renderDashboardPrices(); renderBuilder(); registerWebMCP(); loadPrices();
+window.setInterval(refreshFreshness, 60_000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshFreshness(); });
 }).catch(() => { document.getElementById('updatedLabel').textContent = 'Não foi possível carregar o catálogo.'; });

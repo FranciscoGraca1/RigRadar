@@ -77,3 +77,11 @@ test('rótulos e idade legíveis', () => {
   assert.equal(ageText('2026-09-27T12:00:00.000Z', NOW), 'há 4 dias');
   assert.equal(ageText('lixo', NOW), 'data desconhecida');
 });
+
+test('"sem stock" com leitura mais antiga do que o limite passa a desatualizado', () => {
+  const noStock = { id:'x', status:'sem stock', price:null, lastSeen:{ price:150, store:'A', availability:'Indisponível', observedAt:'2026-10-01T06:00:00.000Z' }, stores:[{ store:'A', price:150, availability:'Indisponível', url:'https://a.example', observedAt:'2026-10-01T06:00:00.000Z' }] };
+  assert.equal(priceStateOf(noStock, { now:Date.parse('2026-10-03T06:00:00.000Z') }).state, 'sem stock', 'no limite ainda conta como leitura recente');
+  const aged = priceStateOf(noStock, { now:Date.parse('2026-10-03T06:01:00.000Z') });
+  assert.equal(aged.state, 'desatualizado');
+  assert.deepEqual(aged.stores, [], 'ofertas antigas sem stock também deixam de ser listadas');
+});

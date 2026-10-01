@@ -28,7 +28,7 @@ jobs:
         with:
           node-version: '24'
       - name: Testar backend e lógica do frontend
-        run: node --test server/server.test.mjs test/price-state.test.mjs
+        run: node --test "server/*.test.mjs" "test/*.test.mjs"
       - name: Recolher preços autorizados e gerar snapshot
         if: github.event_name != 'push'
         env:
