@@ -285,7 +285,7 @@ async function refreshPrices() {
       if (liveCount == null) { showToast('Não foi possível ler o snapshot de preços. Verifica a ligação.'); return; }
       const when = snapshotInfo.generatedAt ? `gerado ${PS.ageText(snapshotInfo.generatedAt)}` : 'sem data';
       if (snapshotInfo.offline) showToast(`Sem resposta da rede: a mostrar a cópia guardada do snapshot (${when}).`);
-      else showToast(`Snapshot relido (${when}). A recolha corre uma vez por dia no servidor; este botão não inicia uma nova recolha.${liveCount ? '' : ' Ainda não há preços atuais.'}`);
+      else showToast(`Snapshot relido (${when}). A recolha corre uma vez por dia e o snapshot só é publicado quando muda; este botão não inicia uma nova recolha.${liveCount ? '' : ' Ainda não há preços atuais.'}`);
       return;
     }
     const response = await fetch('./api/prices/refresh', { method:'POST' });
@@ -359,7 +359,7 @@ function registerWebMCP() {
   register({name:'set_followed_component',title:'Seguir componente',description:'Adiciona ou remove uma peça da lista seguida visível.',inputSchema:{type:'object',properties:{componentId:{type:'string'},follow:{type:'boolean'}},required:['componentId','follow'],additionalProperties:false},annotations:{readOnlyHint:false,untrustedContentHint:false},execute(input){const item=byId(input?.componentId); if (!item || item.trackable === false || typeof input.follow !== 'boolean') throw new Error('Peça ou estado inválido.'); input.follow ? followed.add(item.id) : followed.delete(item.id); localStorage.setItem('rigradar-followed', JSON.stringify([...followed])); renderWatchList(); renderCatalog(); renderDashboardPrices(); return { id:item.id, followed:followed.has(item.id) };}});
   register({name:'get_price_targets',title:'Ler preços-alvo',description:'Devolve os preços-alvo guardados localmente neste navegador.',inputSchema:{type:'object',properties:{},additionalProperties:false},annotations:{readOnlyHint:true,untrustedContentHint:false},execute(){return { ...targets };}});
 }
-if (staticHosting) { document.querySelector('.sidebar-footer p').textContent = 'Preços: snapshot diário. IA: análise local até existir proxy seguro.'; }
+if (staticHosting) { document.querySelector('.sidebar-footer p').textContent = 'Preços: recolha diária; snapshot publicado quando muda. IA: análise local até existir proxy seguro.'; }
 renderFocusChart(); renderWatchList(); renderCatalog(); renderDashboardPrices(); renderBuilder(); registerWebMCP(); loadPrices();
 window.setInterval(refreshFreshness, 60_000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshFreshness(); });

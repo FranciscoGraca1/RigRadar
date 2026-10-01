@@ -32,24 +32,36 @@ jobs:
       - name: Testar backend, lógica do frontend e workflow
         run: node --test "server/*.test.mjs" "test/*.test.mjs"
       - name: Recolher preços autorizados e gerar snapshot
+        id: collect
         env:
           RIGRADAR_SOURCES_JSON: ${{ secrets.RIGRADAR_SOURCES_JSON }}
           RIGRADAR_CONTACT: ${{ vars.RIGRADAR_CONTACT }}
           KUANTOKUSTA_FEED_TOKEN: ${{ secrets.KUANTOKUSTA_FEED_TOKEN }}
           IDEALO_FEED_TOKEN: ${{ secrets.IDEALO_FEED_TOKEN }}
         run: node server/collect-prices.mjs
-      # Guarda sempre os ficheiros desta recolha: se o push falhar, as leituras do dia
-      # continuam recuperáveis a partir do artefacto (o runner é descartado no fim).
+      # Guarda os ficheiros desta recolha ANTES de tentar gravá-los em main: se o push
+      # falhar, as leituras do dia continuam recuperáveis (o runner é descartado no fim).
+      # Só existe artefacto quando a recolha terminou com sucesso; se os testes ou a
+      # recolha falharem, não se publica uma cópia dos ficheiros antigos do checkout que
+      # pudesse ser confundida com uma recolha. recolha.json identifica a origem.
+      - name: Descrever a recolha
+        id: meta
+        run: |
+          node -e "
+            const s = require('./dist/prices.json');
+            const meta = { estado:'recolha concluída', generatedAt:s.generatedAt, runId:'${{ github.run_id }}', runAttempt:'${{ github.run_attempt }}', baseCommit:'${{ github.sha }}', fontesAtivas:(s.sources||[]).filter(x => x.status !== 'não configurada').length, pecasComPrecoAtual:(s.components||[]).filter(c => c.status === 'atual').length };
+            require('fs').writeFileSync('recolha.json', JSON.stringify(meta, null, 2) + '\n');
+            console.log(JSON.stringify(meta));"
       - name: Guardar cópia da recolha como artefacto
-        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: recolha-${{ github.run_id }}
+          name: recolha-concluida-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            recolha.json
             data/prices.sqlite
             dist/prices.json
           retention-days: 30
-          if-no-files-found: warn
+          if-no-files-found: error
       - name: Gravar histórico e snapshot em main
         run: |
           git config user.name "github-actions[bot]"
