@@ -325,6 +325,7 @@ document.getElementById('recommendForm').addEventListener('submit', async event 
   refreshFreshness(); // garante que nenhuma oferta expirada entra no cálculo
   try {
     const recommendation = recommendBuild({ options:buildOptions, budget, use:form.elements.use.value, resolution:form.elements.resolution.value, priority:form.elements.priority.value, evaluate:getCompatibility });
+    if (recommendation.unavailableSlots?.length) { result.textContent = `Não há peças com preço utilizável em: ${recommendation.unavailableSlots.join(', ')}. As leituras reais dessas peças estão desatualizadas ou sem stock; a seleção atual mantém-se.`; return; }
     if (!recommendation.best) { result.textContent = recommendation.cheapest ? `Não há build compatível dentro de ${formatPrice(budget)}. A combinação compatível mais barata custa ${formatPrice(recommendation.cheapest.total)}.` : 'O catálogo não contém uma combinação totalmente compatível.'; return; }
     Object.assign(selections, recommendation.best.choice); saveBuild(); renderBuilder();
     const gpu = selected('GPU'), cpu = selected('CPU');
