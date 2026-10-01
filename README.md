@@ -10,7 +10,7 @@ PWA em JavaScript vanilla para acompanhar preços de componentes, comparar valor
 node .\server\server.mjs
 ```
 
-Abre `http://127.0.0.1:4173/`. O servidor está limitado ao computador local. A PWA e os dados de demonstração também funcionam offline depois da primeira visita. Localmente, o servidor recolhe preços a pedido e responde ao assistente com IA; no GitHub Pages, os preços reais chegam pelo snapshot estático `dist/prices.json` gerado diariamente (ver [Publicação no GitHub Pages](#publicação-no-github-pages)) e o assistente usa apenas a resposta local. Executa os testes com `node --test .\server\server.test.mjs`.
+Abre `http://127.0.0.1:4173/`. O servidor está limitado ao computador local. A PWA e os dados de demonstração também funcionam offline depois da primeira visita. Localmente, o servidor recolhe preços a pedido e responde ao assistente com IA; no GitHub Pages, os preços reais chegam pelo snapshot estático `dist/prices.json` gerado diariamente (ver [Publicação no GitHub Pages](#publicação-no-github-pages)) e o assistente usa apenas a resposta local. Executa os testes com `node --test server/server.test.mjs test/price-state.test.mjs` (o mesmo comando corre no GitHub Actions).
 
 ## Dados e compatibilidade
 
@@ -31,6 +31,21 @@ Por razões de autorização e termos de uso, **nenhuma origem vem ativa**. Copi
 
 Define `enabled:true` e `authorized:true` só depois de confirmar as condições da fonte. Os erros de um fornecedor não impedem os restantes. O parser direto é intencionalmente simples: uma mudança no HTML/JSON-LD pode exigir manutenção. Os pedidos usam `User-Agent` próprio com contacto (`RIGRADAR_CONTACT` ou URL público das Issues). Preços não incluem necessariamente portes; confirma sempre preço e stock no comerciante. Vê [fontes e limites](SOURCES_AND_LIMITS.md).
 
+## Frescura e estado dos preços
+
+Uma leitura real só é apresentada como preço atual se tiver menos de **48 horas** (`OFFER_MAX_AGE_HOURS` em `server/price-service.mjs`) e estiver «Em stock» ou «Limitado». A recolha é diária e o Actions pode atrasar várias horas; 48 h toleram um atraso grande ou uma execução falhada, mas uma oferta que deixou de aparecer no feed deixa de parecer comprável. Cada preço mostra um rótulo:
+
+- **Preço real** — leitura recente e com stock; é o único estado que dispara o alerta de preço-alvo e que a recomendação pode usar.
+- **Sem stock** — há leituras recentes, mas nenhuma comprável; mostra-se o último valor lido apenas como contexto.
+- **Preço desatualizado** — só há leituras com mais de 48 h; não há ofertas listadas.
+- **Preço de exemplo** — valor demonstrativo do catálogo; não houve leitura real.
+
+As leituras antigas continuam no histórico (gráficos, mínimo e média) e nunca são apagadas. O browser volta a verificar a idade com o seu relógio, por isso uma cópia offline antiga é rotulada como desatualizada. O painel mostra também a data e a idade do snapshot e se veio da cache offline. O formato do snapshot está descrito no [modelo de dados](DATA_MODEL.md#formato-de-distpricesjson-implementado).
+
+## Cache e atualização da PWA
+
+`dist/sw.js` usa **rede primeiro** para todos os ficheiros do site: cada pedido revalida com o servidor (`cache: 'no-cache'`, normalmente uma resposta 304) e atualiza a cópia local. Um deploy novo chega na visita seguinte sem mudar versões à mão. Sem rede, ou se a rede não responder em 4 s, usa-se a cópia guardada; um `prices.json` vindo da cache é assinalado como «cópia offline». Só é preciso mudar `CACHE` em `sw.js` quando a lista de ficheiros ou a estratégia mudam.
+
 ## Assistente com IA
 
 Define `OPENAI_API_KEY` **no ambiente do processo do servidor**; opcionalmente, `OPENAI_MODEL` (por defeito `gpt-4.1-mini`). O frontend envia pergunta e contexto da build a `POST /api/assistant`; o servidor chama a API Responses da OpenAI com `store:false`. A chave não entra no browser nem em ficheiros do repositório. Se não houver chave ou a chamada falhar, o chat usa `answerFor()` local. Isto foi testado com uma resposta simulada; uma chamada real requer a tua chave e saldo da API. Não publiques este servidor sem adicionar autenticação, limites de utilização e um deployment apropriado.
@@ -42,3 +57,11 @@ Define `OPENAI_API_KEY` **no ambiente do processo do servidor**; opcionalmente, 
 Escolhemos a opção A: o workflow `.github/workflows/deploy-pages.yml` publica `dist/` a cada atualização de `main` e executa a recolha diariamente às **05:17 UTC** (o GitHub Actions pode atrasar). Executa `server/collect-prices.mjs`, faz commit de `data/prices.sqlite` e `dist/prices.json` e publica este último no Pages no mesmo workflow. No site, o botão de preços volta a consultar o snapshot publicado, mas não inicia scraping. Sem fontes autorizadas, o snapshot contém zero leituras reais — os preços de exemplo mantêm-se claramente identificados.
 
 Para configurar o workflow, cria o secret `RIGRADAR_SOURCES_JSON` nas definições do repositório com o objeto completo `{"sources":[...]}`. Opcionalmente cria os secrets `KUANTOKUSTA_FEED_TOKEN`/`IDEALO_FEED_TOKEN` se houver contratos para esses feeds, e a variável `RIGRADAR_CONTACT` para o contacto do `User-Agent`. Nunca ponhas tokens em URLs, ficheiros versionados ou no frontend. A lista de fontes vem desligada por defeito e o formato dos feeds reais pode exigir adaptação. O GitHub Pages não pode executar o proxy de IA: para IA pública, falta um serviço serverless separado com autenticação, limites de utilização e a chave em secret. Até lá, a resposta local por regex continua a funcionar.
+
+## Resolução de problemas
+
+- **O site mostra uma versão antiga.** Recarrega a página uma vez com rede; o service worker revalida tudo em cada visita. Se persistir, em DevTools → Application → Service Workers escolhe *Unregister* e recarrega.
+- **«Preços indisponíveis (sem ligação)».** O `prices.json` não foi obtido nem estava guardado; os valores de exemplo continuam visíveis e rotulados.
+- **Todos os preços aparecem como desatualizados.** A última recolha com ofertas tem mais de 48 h. Vê o estado da última execução em *Actions* e o campo `sources` em `prices.json`.
+- **A build ou a lista seguida desapareceu.** Valores corrompidos no `localStorage` são ignorados para não bloquear o arranque; a aplicação volta às escolhas por defeito.
+- **Os testes falham com `node:sqlite`.** É necessário Node.js 24 (o CI usa 24; o módulo existe sem flag desde Node 22.13).

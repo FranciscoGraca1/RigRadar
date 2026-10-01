@@ -2,6 +2,23 @@
 
 A implementação atual guarda o catálogo em `dist/catalog.json`, as leituras reais em `data/prices.sqlite` e a build/lista seguida/preços-alvo no navegador. A base real usa `price_history(id, component_id, source_id, store, price_cents, availability, url, collected_at)` e `source_runs(source_id, status, checked_at, error, offers_count)`. `dist/prices.json` é uma projeção estática para o Pages, não a fonte de verdade. O esquema SQL abaixo é uma proposta **mais ampla**, ainda não implementada, para sincronização multi-dispositivo e maior escala.
 
+
+## Formato de `dist/prices.json` (implementado)
+
+Gerado por `service.snapshot(90)` em `server/price-service.mjs`; a API local (`GET /api/prices`) devolve o mesmo formato.
+
+- `generatedAt` (ISO 8601), `statsPeriodDays` (90) e `maxOfferAgeHours` (idade máxima de uma oferta atual; 48 h).
+- `sources[]`: `id`, `name`, `status` (`não configurada`, `por atualizar`, `atualizada`, `parcial`, `sem dados`, `erro`), `checkedAt`, `error`, `offersCount`.
+- `components[]`, um por SKU do catálogo:
+  - `status`: `atual` (há oferta lida há menos de `maxOfferAgeHours` com stock), `sem stock` (há ofertas recentes mas nenhuma comprável), `desatualizado` (só há leituras antigas) ou `sem leituras`.
+  - `price`, `store`, `availability`, `observedAt`: a oferta atual mais barata; `null` se `status` não for `atual`.
+  - `lastSeen`: a leitura mais recente, qualquer que seja a idade ou disponibilidade (`price`, `store`, `availability`, `observedAt`), ou `null`. Serve para contexto, nunca como oferta.
+  - `stores[]`: só ofertas recentes (dentro de `maxOfferAgeHours`), por loja.
+  - `history[]`: todas as leituras do último ano, incluindo antigas e sem stock, para gráficos.
+  - `low`, `avg`, `sampleCount`: mínimo, média e número de leituras **em stock** em `statsPeriodDays`.
+
+O frontend volta a aplicar `maxOfferAgeHours` com o relógio do browser (`dist/price-state.js`): uma cópia do snapshot servida offline dias depois passa a «desatualizado» mesmo que tenha sido gerada como «atual».
+
 ```sql
 PRAGMA foreign_keys = ON;
 

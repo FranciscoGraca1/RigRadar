@@ -27,8 +27,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Testar backend
-        run: node --test server/server.test.mjs
+      - name: Testar backend e lógica do frontend
+        run: node --test server/server.test.mjs test/price-state.test.mjs
       - name: Recolher preços autorizados e gerar snapshot
         if: github.event_name != 'push'
         env:
