@@ -4,3 +4,4 @@ data/*.sqlite-wal
 data/*.sqlite-shm
 server/sources.json
 *.log
+recolha.json

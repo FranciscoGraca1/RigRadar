@@ -5,9 +5,17 @@ const WEIGHTS = {
   geral:{ CPU:.22, Motherboard:.12, RAM:.12, GPU:.17, Armazenamento:.12, Fonte:.10, Caixa:.08, Cooler:.07 }
 };
 
+// Peças com leitura real só entram se forem compráveis agora (fresca e em stock);
+// peças de exemplo entram, e a interface avisa que o preço é demonstrativo.
+const isEligible = item => item.priceSource !== 'live' || (item.priceState === 'atual' && ['Em stock','Limitado'].includes(item.availability));
+
 function recommendBuild({ options, budget, use = 'gaming', resolution = '1440p', priority = 'equilibrio', evaluate }) {
   if (!Number.isFinite(budget) || budget <= 0 || !WEIGHTS[use]) throw new Error('Orçamento ou utilização inválidos.');
   const slots = Object.keys(WEIGHTS[use]);
+  // Se um slot não tem nenhuma peça elegível, nenhuma build é possível; devolve-o para a
+  // interface explicar a causa real (preços desatualizados/sem stock), não "incompatível".
+  const unavailableSlots = slots.filter(slot => !(options[slot] || []).some(isEligible));
+  if (unavailableSlots.length) return { best:null, cheapest:null, unavailableSlots };
   const maxPerformance = Object.fromEntries(['CPU','GPU'].map(slot => [slot, Math.max(...options[slot].map(item => item.performance || 0), 1)]));
   let best = null, cheapest = null;
   function visit(index, choice, total) {
@@ -36,12 +44,12 @@ function recommendBuild({ options, budget, use = 'gaming', resolution = '1440p',
     }
     const slot = slots[index];
     for (const item of options[slot]) {
-      // Peças com leitura real só entram se forem compráveis agora (fresca e em stock);
-      // peças de exemplo entram, e a interface avisa que o preço é demonstrativo.
-      if (item.priceSource === 'live' && !(item.priceState === 'atual' && ['Em stock','Limitado'].includes(item.availability))) continue;
+      if (!isEligible(item)) continue;
       choice[slot] = item.id; visit(index + 1, choice, total + item.price);
     }
   }
   visit(0, {}, 0);
-  return { best, cheapest };
+  return { best, cheapest, unavailableSlots };
 }
+// Em Node (testes) o ficheiro é carregado via require; no browser recommendBuild é global.
+if (typeof module !== 'undefined' && module.exports) module.exports = { recommendBuild, WEIGHTS };

@@ -10,7 +10,7 @@ PWA em JavaScript vanilla para acompanhar preços de componentes, comparar valor
 node .\server\server.mjs
 ```
 
-Abre `http://127.0.0.1:4173/`. O servidor está limitado ao computador local. A PWA e os dados de demonstração também funcionam offline depois da primeira visita. Localmente, o servidor recolhe preços a pedido e responde ao assistente com IA; no GitHub Pages, os preços reais chegam pelo snapshot estático `dist/prices.json` gerado diariamente (ver [Publicação no GitHub Pages](#publicação-no-github-pages)) e o assistente usa apenas a resposta local. Executa os testes com `node --test "server/*.test.mjs" "test/*.test.mjs"` (o mesmo comando corre no GitHub Actions).
+Abre `http://127.0.0.1:4173/`. O servidor está limitado ao computador local. A PWA e os dados de demonstração também funcionam offline depois da primeira visita. Localmente, o servidor recolhe preços a pedido e responde ao assistente com IA; no GitHub Pages, os preços reais chegam pelo snapshot estático `dist/prices.json`, gerado por uma recolha diária e publicado quando há alterações (ver [Publicação no GitHub Pages](#publicação-no-github-pages)) e o assistente usa apenas a resposta local. Executa os testes com `node --test "server/*.test.mjs" "test/*.test.mjs"` (o mesmo comando corre no GitHub Actions).
 
 ## Dados e compatibilidade
 
@@ -18,7 +18,7 @@ Abre `http://127.0.0.1:4173/`. O servidor está limitado ao computador local. A 
 
 O questionário de 4 perguntas recomenda uma build compatível dentro do orçamento e aplica-a diretamente aos slots. Usa preço, índice de valor e rácios por utilização; se um SKU não tiver `score`, usa uma estimativa neutra. “Compacto” usa formato de caixa/motherboard; “upgrade” usa slots M.2 e potência da fonte; “silêncio” é uma aproximação pelo cooler. Não existem métricas fiáveis de ruído ou estética. Se o orçamento não chega, a seleção anterior mantém-se. Peças com leitura real só entram na recomendação quando o preço é atual e com stock; uma peça com leitura real desatualizada ou sem stock é excluída. Peças sem qualquer leitura real entram com o preço de exemplo do catálogo, para que haja sempre uma build de demonstração; o resultado diz quantos preços são reais, quantos são de exemplo e que peças foram excluídas. Os preços-alvo são guardados localmente no navegador, e o alerta visual só dispara para preços reais com stock. Não há notificações push/email nem sincronização entre dispositivos.
 
-O builder verifica socket CPU/motherboard, suporte DDR, módulos de RAM vs. slots DIMM, socket e altura do cooler, formato da caixa, potência e **tipo/quantidade** dos conectores da fonte, comprimento da GPU, slots M.2, portas SATA e rácio de desempenho CPU/GPU. A análise da IA não substitui estas regras determinísticas.
+As regras estão em `dist/compatibility.js` (cobertas por `test/compatibility.test.mjs`). O builder verifica socket CPU/motherboard, suporte DDR, módulos de RAM vs. slots DIMM, socket e altura do cooler, formato da caixa, potência e **tipo/quantidade** dos conectores da fonte, comprimento da GPU, slots M.2, portas SATA e rácio de desempenho CPU/GPU. A análise da IA não substitui estas regras determinísticas.
 
 ## Preços reais
 
@@ -54,7 +54,16 @@ Define `OPENAI_API_KEY` **no ambiente do processo do servidor**; opcionalmente, 
 
 ## Publicação no GitHub Pages
 
-Escolhemos a opção A: o workflow `.github/workflows/deploy-pages.yml` publica `dist/` a cada atualização de `main` e executa a recolha diariamente às **05:17 UTC** (o GitHub Actions pode atrasar). Executa `server/collect-prices.mjs`, faz commit de `data/prices.sqlite` e `dist/prices.json` e publica este último no Pages no mesmo workflow. No site, o botão de preços volta a consultar o snapshot publicado, mas não inicia scraping. Sem fontes autorizadas, o snapshot contém zero leituras reais — os preços de exemplo mantêm-se claramente identificados.
+Escolhemos a opção A: o workflow `.github/workflows/deploy-pages.yml` publica `dist/` a cada atualização de `main` e executa a recolha diariamente às **05:17 UTC** (o GitHub Actions pode atrasar). O workflow tem dois jobs:
+
+- `collect` (só em execuções agendadas ou manuais) corre os testes e `server/collect-prices.mjs`. Se a recolha terminar, guarda os ficheiros como artefacto `recolha-concluida-<run>-<tentativa>` (30 dias, com `recolha.json` a identificar a recolha) antes de os gravar em `main` com `.github/scripts/commit-snapshot.sh`; se os testes ou a recolha falharem, não há artefacto. Se alguém fizer push durante a recolha, o commit do bot é refeito sobre o `main` mais recente e o push é repetido, sem force push. Se um commit humano tiver alterado os ficheiros de dados, o job falha de forma explícita e as leituras ficam no artefacto. Sem fontes ativas nem leituras novas, não cria commit: o snapshot publicado mantém a data da última publicação. Tem um grupo de concorrência próprio, para que um push humano não cancele a recolha do dia.
+- `deploy` corre os testes e publica `dist/` a partir do `main` mais recente (inclui o commit de dados do bot). Os deploys são serializados.
+
+**Recolha diária, publicação quando há alterações.** A recolha corre todos os dias, mas o snapshot só é gravado e publicado quando muda. Com fontes ativas isso acontece em todas as recolhas, porque o estado das fontes e a hora da verificação mudam sempre; sem fontes ativas não há nada novo a publicar. Por isso, a data «snapshot de…» no site é a da última publicação, e não necessariamente a da última execução do workflow. A frescura de cada preço não depende dessa data: é sempre calculada a partir da hora da leitura (48 h).
+
+Para recuperar uma recolha cujo push falhou: descarrega o artefacto `recolha-concluida-…` do run em *Actions*, confirma em `recolha.json` o `generatedAt` e o commit de base, e repõe `data/prices.sqlite` e `dist/prices.json` num commit sobre o `main` atual (a SQLite só acrescenta linhas, por isso a recolha mais recente contém as anteriores do seu commit de base).
+
+`data/prices.sqlite` e `dist/prices.json` são escritos apenas pelo workflow; não os alteres à mão nem em commits humanos. No site, o botão de preços volta a consultar o snapshot publicado, mas não inicia scraping. Sem fontes autorizadas, o snapshot contém zero leituras reais — os preços de exemplo mantêm-se claramente identificados.
 
 Para configurar o workflow, cria o secret `RIGRADAR_SOURCES_JSON` nas definições do repositório com o objeto completo `{"sources":[...]}`. Opcionalmente cria os secrets `KUANTOKUSTA_FEED_TOKEN`/`IDEALO_FEED_TOKEN` se houver contratos para esses feeds, e a variável `RIGRADAR_CONTACT` para o contacto do `User-Agent`. Nunca ponhas tokens em URLs, ficheiros versionados ou no frontend. A lista de fontes vem desligada por defeito e o formato dos feeds reais pode exigir adaptação. O GitHub Pages não pode executar o proxy de IA: para IA pública, falta um serviço serverless separado com autenticação, limites de utilização e a chave em secret. Até lá, a resposta local por regex continua a funcionar.
 
