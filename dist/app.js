@@ -151,28 +151,9 @@ function renderProduct() {
   document.getElementById('productDetail').innerHTML = `<div class="product-hero"><div class="product-hero-art"><b>${esc(item.art)}<br><small>${esc(item.short)}</small></b></div><article class="product-overview"><p class="eyebrow">${item.category} · ${followed.has(item.id) ? 'A seguir' : 'Catálogo'}</p><h1 id="productTitle">${esc(item.name)}</h1><p class="model">${esc(item.model)}</p><div class="detail-price"><strong>${formatPrice(item.price)}</strong>${badgeHtml(item)}<span class="pill good">${item.change == null ? 'Sem tendência' : `${item.change < 0 ? '↓' : '↑'} ${Math.abs(item.change).toFixed(1).replace('.',',')}% / 30 dias`}</span></div><div class="detail-stats"><div class="detail-stat"><span>Mínimo ${item.priceSource === 'live' ? 'real · 90 d' : 'de exemplo'}</span><b>${item.low == null ? '—' : formatPrice(item.low)}</b></div><div class="detail-stat"><span>Média ${item.priceSource === 'live' ? 'real · 90 d' : 'de exemplo'}</span><b>${item.avg == null ? '—' : formatPrice(item.avg)}</b></div><div class="detail-stat"><span>Índice valor</span><b>${item.score == null ? '—' : `${item.score} / 10`}</b></div></div><p class="source-note">${esc(freshnessText(item))}</p><label class="target-field">Preço-alvo (€)<input type="number" min="1" step="0.01" data-target="${item.id}" value="${targets[item.id] || ''}" placeholder="Definir alerta local"></label>${targetReached(item) ? '<p class="target-reached">✓ O preço real atingiu o teu alvo.</p>' : ''}</article></div><div class="product-grid"><article class="panel"><div class="panel-head"><div><p class="eyebrow">Histórico de preço</p><h2>${item.priceSource === 'live' ? 'Leituras reais' : 'Dados de exemplo'}</h2></div><span class="muted">Preço mais baixo é melhor</span></div><div class="period-row">${[7,30,90,365].map(days => `<button data-period="${days}" class="filter${chartPeriod === days ? ' active' : ''}" ${item.priceSource !== 'live' ? 'disabled title="Períodos disponíveis após recolhas reais"' : ''}>${days === 365 ? '1 ano' : `${days} dias`}</button>`).join('')}</div>${graph}</article><article class="panel"><p class="eyebrow">${item.priceSource === 'live' ? 'Ofertas recolhidas' : 'Ofertas de exemplo'}</p><h2>Por loja</h2><div class="history-table">${offers || `<p class="source-note">${item.priceState === 'desatualizado' ? 'Não há ofertas atuais: a última leitura é demasiado antiga para ser apresentada como oferta.' : 'Ainda não há ofertas recolhidas.'}</p>`}</div><p class="source-note">${item.priceSource === 'live' ? 'Confirma preço e stock na loja antes de comprar. O alerta é local a este navegador; não envia notificações.' : 'Valores demonstrativos; ainda não foram recolhidos preços desta peça.'}</p></article></div>`;
   const svg = document.querySelector('#productDetail .chart-wrap svg'); if (svg) renderChartInto(svg, history);
 }
+// As regras vivem em dist/compatibility.js (puro e testado em test/compatibility.test.mjs).
 function getCompatibility(choice = selections) {
-  const cpu = selected('CPU',choice), board = selected('Motherboard',choice), ram = selected('RAM',choice), gpu = selected('GPU',choice), storage = selected('Armazenamento',choice), psu = selected('Fonte',choice), caseItem = selected('Caixa',choice), cooler = selected('Cooler',choice);
-  const warnings = [];
-  if (cpu.socket !== board.socket) warnings.push(`A CPU usa socket ${cpu.socket}, mas a motherboard usa ${board.socket}.`);
-  if (ram.type !== board.ram || !(Array.isArray(cpu.ram) ? cpu.ram.includes(ram.type) : ram.type === cpu.ram)) warnings.push(`A RAM ${ram.type} não é suportada por esta combinação CPU/motherboard (${board.ram}).`);
-  if (ram.modules > board.dimms) warnings.push(`O kit de RAM tem ${ram.modules} módulos, mas a motherboard só tem ${board.dimms} slots DIMM.`);
-  if (!cooler.sockets.includes(cpu.socket)) warnings.push(`O cooler ${cooler.name} não inclui montagem para o socket ${cpu.socket} da CPU.`);
-  if (cooler.id === 'coolerstock' && cpu.id !== 'cpu7600') warnings.push('O cooler incluído só acompanha o Ryzen 5 7600.');
-  if (!caseItem.forms.includes(board.form)) warnings.push(`A caixa não aceita motherboards ${board.form}.`);
-  const requiredPower = Math.ceil((cpu.watt + gpu.watt + 75) * 1.35 / 10) * 10;
-  if (psu.watt < requiredPower) warnings.push(`A fonte de ${psu.watt} W é curta: recomenda-se pelo menos ${requiredPower} W com margem.`);
-  for (const [type, count] of Object.entries(gpu.powerConnectors)) {
-    const available = psu.powerConnectors?.[type] || 0;
-    if (available < count) warnings.push(`A GPU pede ${count} conector${count > 1 ? 'es' : ''} ${type === '8pin' ? 'PCIe 8-pin' : type}, mas a fonte só tem ${available} desse tipo.`);
-  }
-  if (gpu.length > caseItem.gpuMax) warnings.push(`A GPU mede ${gpu.length} mm e excede os ${caseItem.gpuMax} mm disponíveis na caixa.`);
-  if (cooler.height > caseItem.coolerMax) warnings.push(`O cooler tem ${cooler.height} mm e a caixa permite até ${caseItem.coolerMax} mm.`);
-  if (storage.interface === 'M.2' && board.m2 < storage.slots) warnings.push('Não há slots M.2 suficientes na motherboard para este armazenamento.');
-  if (storage.interface === 'SATA' && (board.sata || 0) < storage.slots) warnings.push(`O armazenamento precisa de ${storage.slots} porta${storage.slots > 1 ? 's' : ''} SATA, mas a motherboard só tem ${board.sata || 0}.`);
-  const ratio = gpu.performance / cpu.performance;
-  if (ratio > 1.85) warnings.push('Possível gargalo: a GPU é muito mais rápida do que a CPU para jogos a 1080p.');
-  return { warnings, requiredPower, draw: cpu.watt + gpu.watt + 75, board };
+  return window.RigRadarCompatibility.checkCompatibility({ cpu:selected('CPU',choice), board:selected('Motherboard',choice), ram:selected('RAM',choice), gpu:selected('GPU',choice), storage:selected('Armazenamento',choice), psu:selected('Fonte',choice), caseItem:selected('Caixa',choice), cooler:selected('Cooler',choice) });
 }
 function getBuildContext() {
   const result = getCompatibility();

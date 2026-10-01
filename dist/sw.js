@@ -9,8 +9,8 @@
 //   que chegue depois continua a ser gravada (event.waitUntil).
 // - /api/* (servidor local) e outras origens (Google Fonts) não passam por aqui.
 // CACHE só precisa de mudar quando a lista de ASSETS ou esta lógica mudarem.
-const CACHE = 'rigradar-v13';
-const ASSETS = ['./', './index.html', './styles.css', './enhancements.css', './price-state.js', './recommend.js', './app.js', './catalog.json', './prices.json', './manifest.webmanifest', './favicon.svg'];
+const CACHE = 'rigradar-v14';
+const ASSETS = ['./', './index.html', './styles.css', './enhancements.css', './price-state.js', './compatibility.js', './recommend.js', './app.js', './catalog.json', './prices.json', './manifest.webmanifest', './favicon.svg'];
 const NETWORK_TIMEOUT_MS = 4000;
 
 self.addEventListener('install', event => event.waitUntil(
