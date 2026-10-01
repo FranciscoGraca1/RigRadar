@@ -143,6 +143,7 @@ function getCompatibility(choice = selections) {
   if (gpu.length > caseItem.gpuMax) warnings.push(`A GPU mede ${gpu.length} mm e excede os ${caseItem.gpuMax} mm disponíveis na caixa.`);
   if (cooler.height > caseItem.coolerMax) warnings.push(`O cooler tem ${cooler.height} mm e a caixa permite até ${caseItem.coolerMax} mm.`);
   if (storage.interface === 'M.2' && board.m2 < storage.slots) warnings.push('Não há slots M.2 suficientes na motherboard para este armazenamento.');
+  if (storage.interface === 'SATA' && (board.sata || 0) < storage.slots) warnings.push(`O armazenamento precisa de ${storage.slots} porta${storage.slots > 1 ? 's' : ''} SATA, mas a motherboard só tem ${board.sata || 0}.`);
   const ratio = gpu.performance / cpu.performance;
   if (ratio > 1.85) warnings.push('Possível gargalo: a GPU é muito mais rápida do que a CPU para jogos a 1080p.');
   return { warnings, requiredPower, draw: cpu.watt + gpu.watt + 75, board };
@@ -161,7 +162,7 @@ function renderBuilder() {
   summary.innerHTML = `<span class="badge">${compatibility.warnings.length ? '!' : '✓'}</span><div><h2>${compatibility.warnings.length ? 'Há incompatibilidades a resolver' : 'Build compatível'}</h2><p>${message}</p></div>`;
   const showNote = slot => {
     if (!compatibility.warnings.length) return slot === 'Motherboard' ? compatibility.board.bios : '';
-    const match = compatibility.warnings.find(warning => warning.toLowerCase().includes(slot.toLowerCase().replace('fonte','fonte')) || (slot === 'CPU' && warning.includes('socket')) || (slot === 'RAM' && warning.includes('RAM')) || (slot === 'GPU' && (warning.includes('GPU') || warning.includes('PCIe'))) || (slot === 'Caixa' && warning.includes('caixa')) || (slot === 'Cooler' && warning.includes('cooler')) || (slot === 'Armazenamento' && warning.includes('M.2')));
+    const match = compatibility.warnings.find(warning => warning.toLowerCase().includes(slot.toLowerCase().replace('fonte','fonte')) || (slot === 'CPU' && warning.includes('socket')) || (slot === 'RAM' && warning.includes('RAM')) || (slot === 'GPU' && (warning.includes('GPU') || warning.includes('PCIe'))) || (slot === 'Caixa' && warning.includes('caixa')) || (slot === 'Cooler' && warning.includes('cooler')) || (slot === 'Armazenamento' && (warning.includes('M.2') || warning.includes('SATA'))));
     return match || (slot === 'Motherboard' ? compatibility.board.bios : '');
   };
   document.getElementById('componentSlots').innerHTML = slots.map(slot => { const item = selected(slot), note = showNote(slot); return `<article class="slot"><span class="slot-label">${slot}</span><div class="slot-control"><select data-slot="${slot}" aria-label="Escolher ${slot}">${buildOptions[slot].map(option => `<option value="${option.id}" ${option.id === item.id ? 'selected':''}>${esc(option.name)}</option>`).join('')}</select></div><span class="slot-price${item.price === 0 ? ' empty':''}">${item.price ? formatPrice(item.price) : 'Incluído'}</span>${note ? `<p class="slot-note${compatibility.warnings.includes(note) ? ' warn' : ''}">${esc(note)}</p>` : ''}</article>`; }).join('');

@@ -10,7 +10,7 @@ PWA em JavaScript vanilla para acompanhar preços de componentes, comparar valor
 node .\server\server.mjs
 ```
 
-Abre `http://127.0.0.1:4173/`. O servidor está limitado ao computador local. A PWA e os dados de demonstração também funcionam offline depois da primeira visita; preços reais e IA exigem ligação ao servidor. Executa os testes com `node --test .\server\server.test.mjs`.
+Abre `http://127.0.0.1:4173/`. O servidor está limitado ao computador local. A PWA e os dados de demonstração também funcionam offline depois da primeira visita. Localmente, o servidor recolhe preços a pedido e responde ao assistente com IA; no GitHub Pages, os preços reais chegam pelo snapshot estático `dist/prices.json` gerado diariamente (ver [Publicação no GitHub Pages](#publicação-no-github-pages)) e o assistente usa apenas a resposta local. Executa os testes com `node --test .\server\server.test.mjs`.
 
 ## Dados e compatibilidade
 
@@ -18,7 +18,7 @@ Abre `http://127.0.0.1:4173/`. O servidor está limitado ao computador local. A 
 
 O questionário de 4 perguntas recomenda uma build compatível dentro do orçamento e aplica-a diretamente aos slots. Usa preço, índice de valor e rácios por utilização; se um SKU não tiver `score`, usa uma estimativa neutra. “Compacto” usa formato de caixa/motherboard; “upgrade” usa slots M.2 e potência da fonte; “silêncio” é uma aproximação pelo cooler. Não existem métricas fiáveis de ruído ou estética. Se o orçamento não chega, a seleção anterior mantém-se. Os preços-alvo são guardados localmente no navegador, e o alerta visual só dispara para preços reais com stock. Não há notificações push/email nem sincronização entre dispositivos.
 
-O builder verifica socket CPU/motherboard, suporte DDR, módulos de RAM vs. slots DIMM, socket e altura do cooler, formato da caixa, potência e **tipo/quantidade** dos conectores da fonte, comprimento da GPU, slots M.2 e rácio de desempenho CPU/GPU. A análise da IA não substitui estas regras determinísticas.
+O builder verifica socket CPU/motherboard, suporte DDR, módulos de RAM vs. slots DIMM, socket e altura do cooler, formato da caixa, potência e **tipo/quantidade** dos conectores da fonte, comprimento da GPU, slots M.2, portas SATA e rácio de desempenho CPU/GPU. A análise da IA não substitui estas regras determinísticas.
 
 ## Preços reais
 
